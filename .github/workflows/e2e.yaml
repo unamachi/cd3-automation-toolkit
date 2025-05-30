@@ -1,0 +1,28 @@
+name: Self-hosted Runner Test
+
+on:
+  push:
+    branches:
+      - master
+      - develop
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  test-on-selfhosted:
+    runs-on: [self-hosted]  # runner's label
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Print runner info
+        run: |
+          echo "Running on $(hostname)"
+          uname -a
+
+      - name: Verify Python installation
+        run: |
+          python3 --version
+          which python3
+
+      - name: Say hello
+        run: echo "✅ Self-hosted runner is working!"
