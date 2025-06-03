@@ -8,8 +8,8 @@ on:
   workflow_dispatch:  # Manual trigger
 
 jobs:
-  test-on-selfhosted:
-    runs-on: [self-hosted]  # runner's label
+  test:
+    runs-on: [self-hosted]  # Runner's label
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -23,6 +23,121 @@ jobs:
         run: |
           python3 --version
           which python3
+
+      - name: Ensure OCI CLI is installed
+        run: |
+          if ! command -v oci &> /dev/null; then
+            curl -L -o oci_install.sh https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh
+            chmod +x oci_install.sh
+            ./oci_install.sh --accept-all-defaults
+            export PATH=$HOME/bin:$PATH
+          fi
+
+      - name: Retrieve Vault OCID dynamically
+        env:
+          VAULT_COMPARTMENT_OCID: ${{ secrets.VAULT_COMPARTMENT_OCID }}  # From GitHub Secret
+          VAULT_NAME: "oke_testing"  # Update with your Vault's display name
+        run: |
+          VAULT_OCID=$(oci vault vault list --compartment-id "$VAULT_COMPARTMENT_OCID" --query "data[?\"display-name\"=='$VAULT_NAME'].id | [0]" --raw-output)
+          if [ -z "$VAULT_OCID" ]; then
+            echo "Error: Vault '$VAULT_NAME' not found in compartment $VAULT_COMPARTMENT_OCID"
+            exit 1
+          fi
+          echo "VAULT_OCID=$VAULT_OCID" >> $GITHUB_ENV
+
+      - name: Retrieve sensitive variables from OCI Vault
+        run: | 
+          # Fetch secrets from OCI Vault and store in temporary variables
+          COMPARTMENT_OCID=$(oci vault secret get --secret-id "ocid1.vaultsecret.oc1.phx.amaaaaaav7zeaxyanlzj554npl3yqku736gidtt6hlxowgfslbw3if33m67a" --query "data.secret-content.content" --raw-output)
+          VCN_COMPARTMENT_OCID=$(oci vault secret get --secret-id "ocid1.vaultsecret.oc1.phx.amaaaaaav7zeaxyaisbc3jidyv6dxv27ru5y2i2hxr6do5ol2ey6dc5ltl3a" --query "data.secret-content.content" --raw-output)
+          EXISTING_VCN_ID=$(oci vault secret get --secret-id "ocid1.vaultsecret.oc1.phx.amaaaaaav7zeaxya6haxgbqvzrqq3hu6wfh2eu5w5wk3kzgk5wp6nrxfzmga" --query "data.secret-content.content" --raw-output)
+          EXISTING_SUBNET_ID=$(oci vault secret get --secret-id "ocid1.vaultsecret.oc1.phx.amaaaaaav7zeaxyalyo6ghjc5s4dnhubpemmcjn6nhtvlsmadju7cnodwuya" --query "data.secret-content.content" --raw-output)
+          SSH_PUBLIC_KEY=$(oci vault secret get --secret-id "ocid1.vaultsecret.oc1.phx.amaaaaaav7zeaxya55diewwfmcfz3hzmoa6alttaz2af6mrwgnro6g4saitq" --query "data.secret-content.content" --raw-output)
+          # Generate variables.json without logging
+          cat << EOF > variables.json
+          {
+            "instance_compartment_strategy": "Use Existing Compartment",
+            "instance_compartment_ocid": "$COMPARTMENT_OCID",
+            "parent_compartment_ocid": "",
+            "new_compartment_name": "",
+            "instance_name": "workvm",
+            "instance_os_version": "Oracle-Linux-9",
+            "instance_shape": "VM.Standard3.Flex",
+            "instance_ocpus": 2,
+            "instance_ram": 8,
+            "boot_volume_size": 50,
+            "instance_ad": "AD-1",
+            "instance_fd": "FD-1",
+            "ssh_public_key": "$SSH_PUBLIC_KEY",
+            "vcn_strategy": "Use Existing VCN",
+            "vcn_compartment_ocid": "$VCN_COMPARTMENT_OCID",
+            "existing_vcn_id": "$EXISTING_VCN_ID",
+            "existing_subnet_id": "$EXISTING_SUBNET_ID",
+            "assign_publicip_existing_subnet": false,
+            "assign_existing_nsg": false,
+            "existing_nsg_id": "",
+            "vcn_name": "",
+            "vcn_cidr": "",
+            "vcn_dns_label": "",
+            "subnet_name": "",
+            "subnet_cidr": "",
+            "subnet_dns_label": "",
+            "subnet_type": "",
+            "assign_public_ip": false,
+            "drg_attachment": false,
+            "existing_drg_id": "",
+            "source_cidr": ["10.0.0.0/24"]
+          }
+          EOF
+
+      - name: Set ZIP URL
+        id: set-zip-url
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
+            echo "ZIP_URL=https://github.com/oracle-devrel/cd3-automation-toolkit/archive/refs/heads/main.zip" >> $GITHUB_ENV
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            echo "ZIP_URL=https://github.com/oracle-devrel/cd3-automation-toolkit/archive/refs/heads/testUpgrade.zip" >> $GITHUB_ENV
+          fi
+
+      - name: Create/Update Resource Manager stack
+        env:
+          OCI_REGION: "us-ashburn-1"
+        run: |
+          # Extract compartment OCID from variables.json
+          COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' variables.json)
+          STACK_ID=$(oci resource-manager stack create \
+            --compartment-id "$COMPARTMENT_OCID" \
+            --config-source-uri "$ZIP_URL" \
+            --config-source-type ZIP_UPLOAD \
+            --variables file://variables.json \
+            --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" \
+            --description "Automated CD3 WorkVM Stack for ${{ github.ref_name }}" \
+            --region "$OCI_REGION" \
+            --query "data.id" --raw-output 2>/dev/null || \
+          oci resource-manager stack update \
+            --stack-id $(oci resource-manager stack list --compartment-id "$COMPARTMENT_OCID" --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" --query "data[0].id" --raw-output) \
+            --config-source-uri "$ZIP_URL" \
+            --config-source-type ZIP_UPLOAD \
+            --variables file://variables.json \
+            --region "$OCI_REGION" \
+            --query "data.id" --raw-output)
+
+      - name: Apply Resource Manager stack
+        env:
+          OCI_REGION: "us-ashburn-1"
+        run: |
+          # Extract compartment OCID from variables.json
+          COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' variables.json)
+          STACK_ID=$(oci resource-manager stack list --compartment-id "$COMPARTMENT_OCID" --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" --query "data[0].id" --raw-output)
+          oci resource-manager job create-apply-job \
+            --stack-id "$STACK_ID" \
+            --execution-plan-strategy AUTO_APPROVED \
+            --region "$OCI_REGION"
+
+      - name: Clean up sensitive files
+        if: always()
+        run: |
+          rm -f variables.json
 
       - name: Say hello
         run: echo "✅ Self-hosted runner is working!"
