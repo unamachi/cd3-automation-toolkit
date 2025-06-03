@@ -1,3 +1,4 @@
+```yaml
 name: Self-hosted Runner Test
 
 on:
@@ -33,27 +34,35 @@ jobs:
             export PATH=$HOME/bin:$PATH
           fi
 
-      - name: Retrieve Vault OCID dynamically
+      - name: Retrieve secret contents from OCI Vault
         env:
-          VAULT_COMPARTMENT_OCID: ${{ secrets.VAULT_COMPARTMENT_OCID }}  # From GitHub Secret
-          VAULT_NAME: "oke_testing"  # Update with your Vault's display name
+          COMPARTMENT_SECRET_OCID: ${{ secrets.COMPARTMENT_SECRET_OCID }}
+          VCN_COMPARTMENT_SECRET_OCID: ${{ secrets.VCN_COMPARTMENT_SECRET_OCID }}
+          VCN_ID_SECRET_OCID: ${{ secrets.VCN_ID_SECRET_OCID }}
+          SUBNET_ID_SECRET_OCID: ${{ secrets.SUBNET_ID_SECRET_OCID }}
+          SSH_KEY_SECRET_OCID: ${{ secrets.SSH_KEY_SECRET_OCID }}
         run: |
-          VAULT_OCID=$(oci vault vault list --compartment-id "$VAULT_COMPARTMENT_OCID" --query "data[?\"display-name\"=='$VAULT_NAME'].id | [0]" --raw-output)
-          if [ -z "$VAULT_OCID" ]; then
-            echo "Error: Vault '$VAULT_NAME' not found in compartment $VAULT_COMPARTMENT_OCID"
-            exit 1
-          fi
-          echo "VAULT_OCID=$VAULT_OCID" >> $GITHUB_ENV
-
-      - name: Retrieve sensitive variables from OCI Vault
-        run: | 
-          # Fetch secrets from OCI Vault and store in temporary variables
-          COMPARTMENT_OCID=$(oci vault secret get --secret-id "ocid1.vaultsecret.oc1.phx.amaaaaaav7zeaxyanlzj554npl3yqku736gidtt6hlxowgfslbw3if33m67a" --query "data.secret-content.content" --raw-output)
-          VCN_COMPARTMENT_OCID=$(oci vault secret get --secret-id "ocid1.vaultsecret.oc1.phx.amaaaaaav7zeaxyaisbc3jidyv6dxv27ru5y2i2hxr6do5ol2ey6dc5ltl3a" --query "data.secret-content.content" --raw-output)
-          EXISTING_VCN_ID=$(oci vault secret get --secret-id "ocid1.vaultsecret.oc1.phx.amaaaaaav7zeaxya6haxgbqvzrqq3hu6wfh2eu5w5wk3kzgk5wp6nrxfzmga" --query "data.secret-content.content" --raw-output)
-          EXISTING_SUBNET_ID=$(oci vault secret get --secret-id "ocid1.vaultsecret.oc1.phx.amaaaaaav7zeaxyalyo6ghjc5s4dnhubpemmcjn6nhtvlsmadju7cnodwuya" --query "data.secret-content.content" --raw-output)
-          SSH_PUBLIC_KEY=$(oci vault secret get --secret-id "ocid1.vaultsecret.oc1.phx.amaaaaaav7zeaxya55diewwfmcfz3hzmoa6alttaz2af6mrwgnro6g4saitq" --query "data.secret-content.content" --raw-output)
-          # Generate variables.json without logging
+          # Verify secret OCIDs
+          for OCID in "$COMPARTMENT_SECRET_OCID" "$VCN_COMPARTMENT_SECRET_OCID" "$VCN_ID_SECRET_OCID" "$SUBNET_ID_SECRET_OCID" "$SSH_KEY_SECRET_OCID"; do
+            if [ -z "$OCID" ]; then
+              echo "Error: One or more secret OCIDs not set in GitHub Secrets"
+              exit 1
+            fi
+          done
+          # Fetch secret contents
+          COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+          VCN_COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$VCN_COMPARTMENT_SECRET_OCID" --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+          EXISTING_VCN_ID=$(oci secrets secret-bundle get --secret-id "$VCN_ID_SECRET_OCID" --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+          EXISTING_SUBNET_ID=$(oci secrets secret-bundle get --secret-id "$SUBNET_ID_SECRET_OCID" --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+          SSH_PUBLIC_KEY=$(oci secrets secret-bundle get --secret-id "$SSH_KEY_SECRET_OCID" --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+          # Verify secret contents
+          for VALUE in "$COMPARTMENT_OCID" "$VCN_COMPARTMENT_OCID" "$EXISTING_VCN_ID" "$EXISTING_SUBNET_ID" "$SSH_PUBLIC_KEY"; do
+            if [ -z "$VALUE" ]; then
+              echo "Error: One or more secret values are empty"
+              exit 1
+            fi
+          done
+          # Generate variables.json
           cat << EOF > variables.json
           {
             "instance_compartment_strategy": "Use Existing Compartment",
@@ -103,7 +112,6 @@ jobs:
         env:
           OCI_REGION: "us-ashburn-1"
         run: |
-          # Extract compartment OCID from variables.json
           COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' variables.json)
           STACK_ID=$(oci resource-manager stack create \
             --compartment-id "$COMPARTMENT_OCID" \
@@ -115,7 +123,7 @@ jobs:
             --region "$OCI_REGION" \
             --query "data.id" --raw-output 2>/dev/null || \
           oci resource-manager stack update \
-            --stack-id $(oci resource-manager stack list --compartment-id "$COMPARTMENT_OCID" --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" --query "data[0].id" --raw-output) \
+            --stack-id "$(oci resource-manager stack list --compartment-id "$COMPARTMENT_OCID" --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" --query "data[0].id" --raw-output)" \
             --config-source-uri "$ZIP_URL" \
             --config-source-type ZIP_UPLOAD \
             --variables file://variables.json \
@@ -126,7 +134,6 @@ jobs:
         env:
           OCI_REGION: "us-ashburn-1"
         run: |
-          # Extract compartment OCID from variables.json
           COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' variables.json)
           STACK_ID=$(oci resource-manager stack list --compartment-id "$COMPARTMENT_OCID" --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" --query "data[0].id" --raw-output)
           oci resource-manager job create-apply-job \
@@ -141,3 +148,4 @@ jobs:
 
       - name: Say hello
         run: echo "✅ Self-hosted runner is working!"
+```
