@@ -49,11 +49,11 @@ jobs:
             fi
           done
           # Fetch secret contents
-          COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-          VCN_COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$VCN_COMPARTMENT_SECRET_OCID" --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-          EXISTING_VCN_ID=$(oci secrets secret-bundle get --secret-id "$VCN_ID_SECRET_OCID" --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-          EXISTING_SUBNET_ID=$(oci secrets secret-bundle get --secret-id "$SUBNET_ID_SECRET_OCID" --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-          SSH_PUBLIC_KEY=$(oci secrets secret-bundle get --secret-id "$SSH_KEY_SECRET_OCID" --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+          COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+          VCN_COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$VCN_COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+          EXISTING_VCN_ID=$(oci secrets secret-bundle get --secret-id "$VCN_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+          EXISTING_SUBNET_ID=$(oci secrets secret-bundle get --secret-id "$SUBNET_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+          SSH_PUBLIC_KEY=$(oci secrets secret-bundle get --secret-id "$SSH_KEY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
           # Verify secret contents
           for VALUE in "$COMPARTMENT_OCID" "$VCN_COMPARTMENT_OCID" "$EXISTING_VCN_ID" "$EXISTING_SUBNET_ID" "$SSH_PUBLIC_KEY"; do
             if [ -z "$VALUE" ]; then
