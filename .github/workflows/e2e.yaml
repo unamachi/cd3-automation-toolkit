@@ -5,11 +5,11 @@ on:
     branches:
       - master
       - develop
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:
 
 jobs:
   test:
-    runs-on: [self-hosted]  # Runner's label
+    runs-on: [self-hosted]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -48,12 +48,14 @@ jobs:
               exit 1
             fi
           done
+
           # Fetch secret contents
           COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
           VCN_COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$VCN_COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
           EXISTING_VCN_ID=$(oci secrets secret-bundle get --secret-id "$VCN_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
           EXISTING_SUBNET_ID=$(oci secrets secret-bundle get --secret-id "$SUBNET_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
           SSH_PUBLIC_KEY=$(oci secrets secret-bundle get --secret-id "$SSH_KEY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+
           # Verify secret contents
           for VALUE in "$COMPARTMENT_OCID" "$VCN_COMPARTMENT_OCID" "$EXISTING_VCN_ID" "$EXISTING_SUBNET_ID" "$SSH_PUBLIC_KEY"; do
             if [ -z "$VALUE" ]; then
@@ -61,42 +63,43 @@ jobs:
               exit 1
             fi
           done
-          # Generate variables.json
+
+          # Generate variables.json (remove leading spaces to avoid JSON formatting issues)
           cat << EOF > variables.json
-          {
-            "instance_compartment_strategy": "Use Existing Compartment",
-            "instance_compartment_ocid": "$COMPARTMENT_OCID",
-            "parent_compartment_ocid": "",
-            "new_compartment_name": "",
-            "instance_name": "workvm",
-            "instance_os_version": "Oracle-Linux-9",
-            "instance_shape": "VM.Standard3.Flex",
-            "instance_ocpus": 2,
-            "instance_ram": 8,
-            "boot_volume_size": 50,
-            "instance_ad": "AD-1",
-            "instance_fd": "FD-1",
-            "ssh_public_key": "$SSH_PUBLIC_KEY",
-            "vcn_strategy": "Use Existing VCN",
-            "vcn_compartment_ocid": "$VCN_COMPARTMENT_OCID",
-            "existing_vcn_id": "$EXISTING_VCN_ID",
-            "existing_subnet_id": "$EXISTING_SUBNET_ID",
-            "assign_publicip_existing_subnet": false,
-            "assign_existing_nsg": false,
-            "existing_nsg_id": "",
-            "vcn_name": "",
-            "vcn_cidr": "",
-            "vcn_dns_label": "",
-            "subnet_name": "",
-            "subnet_cidr": "",
-            "subnet_dns_label": "",
-            "subnet_type": "",
-            "assign_public_ip": false,
-            "drg_attachment": false,
-            "existing_drg_id": "",
-            "source_cidr": ["10.0.0.0/24"]
-          }
-          EOF
+{
+  "instance_compartment_strategy": "Use Existing Compartment",
+  "instance_compartment_ocid": "$COMPARTMENT_OCID",
+  "parent_compartment_ocid": "",
+  "new_compartment_name": "",
+  "instance_name": "workvm",
+  "instance_os_version": "Oracle-Linux-9",
+  "instance_shape": "VM.Standard3.Flex",
+  "instance_ocpus": 2,
+  "instance_ram": 8,
+  "boot_volume_size": 50,
+  "instance_ad": "AD-1",
+  "instance_fd": "FD-1",
+  "ssh_public_key": "$SSH_PUBLIC_KEY",
+  "vcn_strategy": "Use Existing VCN",
+  "vcn_compartment_ocid": "$VCN_COMPARTMENT_OCID",
+  "existing_vcn_id": "$EXISTING_VCN_ID",
+  "existing_subnet_id": "$EXISTING_SUBNET_ID",
+  "assign_publicip_existing_subnet": false,
+  "assign_existing_nsg": false,
+  "existing_nsg_id": "",
+  "vcn_name": "",
+  "vcn_cidr": "",
+  "vcn_dns_label": "",
+  "subnet_name": "",
+  "subnet_cidr": "",
+  "subnet_dns_label": "",
+  "subnet_type": "",
+  "assign_public_ip": false,
+  "drg_attachment": false,
+  "existing_drg_id": "",
+  "source_cidr": ["10.0.0.0/24"]
+}
+EOF
 
       - name: Set ZIP URL
         id: set-zip-url
@@ -109,10 +112,12 @@ jobs:
 
       - name: Create/Update Resource Manager stack
         env:
-          OCI_REGION: "us-ashburn-1"
+          OCI_REGION: "us-phoenix-1"
         run: |
           COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' variables.json)
+
           STACK_ID=$(oci resource-manager stack create \
+            --auth instance_principal  \
             --compartment-id "$COMPARTMENT_OCID" \
             --config-source-uri "$ZIP_URL" \
             --config-source-type ZIP_UPLOAD \
@@ -120,22 +125,42 @@ jobs:
             --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" \
             --description "Automated CD3 WorkVM Stack for ${{ github.ref_name }}" \
             --region "$OCI_REGION" \
-            --query "data.id" --raw-output 2>/dev/null || \
-          oci resource-manager stack update \
-            --stack-id "$(oci resource-manager stack list --compartment-id "$COMPARTMENT_OCID" --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" --query "data[0].id" --raw-output)" \
-            --config-source-uri "$ZIP_URL" \
-            --config-source-type ZIP_UPLOAD \
-            --variables file://variables.json \
-            --region "$OCI_REGION" \
-            --query "data.id" --raw-output)
+            --query "data.id" --raw-output 2>/dev/null || true)
+
+          if [ -z "$STACK_ID" ]; then
+            EXISTING_STACK_ID=$(oci resource-manager stack list --compartment-id "$COMPARTMENT_OCID" --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" --region "$OCI_REGION" --query "data[0].id" --raw-output)
+            if [ -z "$EXISTING_STACK_ID" ]; then
+              echo "Error: No existing stack found to update"
+              exit 1
+            fi
+            echo "Updating existing stack $EXISTING_STACK_ID"
+            STACK_ID=$(oci resource-manager stack update \
+              --stack-id "$EXISTING_STACK_ID" \
+              --auth instance_principal  \
+              --config-source-uri "$ZIP_URL" \
+              --config-source-type ZIP_UPLOAD \
+              --variables file://variables.json \
+              --region "$OCI_REGION" \
+              --query "data.id" --raw-output)
+          fi
+
+          echo "STACK_ID=$STACK_ID"
 
       - name: Apply Resource Manager stack
         env:
-          OCI_REGION: "us-ashburn-1"
+          OCI_REGION: "us-phoenix-1"
         run: |
           COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' variables.json)
-          STACK_ID=$(oci resource-manager stack list --compartment-id "$COMPARTMENT_OCID" --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" --query "data[0].id" --raw-output)
+          STACK_ID=$(oci resource-manager stack list --compartment-id "$COMPARTMENT_OCID" --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" --region "$OCI_REGION" --query "data[0].id" --raw-output)
+
+          if [ -z "$STACK_ID" ]; then
+            echo "Error: Stack ID not found for applying"
+            exit 1
+          fi
+
+          echo "Applying Resource Manager stack $STACK_ID in region $OCI_REGION"
           oci resource-manager job create-apply-job \
+            --auth instance_principal  \
             --stack-id "$STACK_ID" \
             --execution-plan-strategy AUTO_APPROVED \
             --region "$OCI_REGION"
