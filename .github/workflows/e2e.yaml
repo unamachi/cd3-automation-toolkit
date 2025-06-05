@@ -71,6 +71,7 @@ jobs:
             --arg existing_vcn_id "$EXISTING_VCN_ID" \
             --arg existing_subnet_id "$EXISTING_SUBNET_ID" \
             --arg ssh_public_key "$SSH_PUBLIC_KEY" \
+            --arg source_cidr '["10.0.0.0/24"]' \
             '{
               instance_compartment_strategy: "Use Existing Compartment",
               instance_compartment_ocid: $instance_compartment_ocid,
@@ -102,7 +103,7 @@ jobs:
               assign_public_ip: false,
               drg_attachment: false,
               existing_drg_id: "",
-              source_cidr: ["10.0.0.0/24"]
+              source_cidr: $source_cidr
             }' > variables.json
   
       - name: Set ZIP URL
