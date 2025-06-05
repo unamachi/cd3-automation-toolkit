@@ -102,13 +102,17 @@ jobs:
           EOF
 
       - name: Set ZIP URL
-        id: set-zip-url
         run: |
-          if [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
+          echo "github.ref is: ${{ github.ref }}"
+          if [[ "${{ github.ref }}" == "refs/heads/master" || "${{ github.ref }}" == "refs/heads/main" ]]; then
             echo "ZIP_URL=https://github.com/oracle-devrel/cd3-automation-toolkit/archive/refs/heads/main.zip" >> $GITHUB_ENV
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             echo "ZIP_URL=https://github.com/oracle-devrel/cd3-automation-toolkit/archive/refs/heads/testUpgrade.zip" >> $GITHUB_ENV
+          else
+            echo "ZIP_URL=https://github.com/oracle-devrel/cd3-automation-toolkit/archive/refs/heads/main.zip" >> $GITHUB_ENV
+            echo "⚠️ Warning: Defaulting ZIP_URL to main.zip as fallback."
           fi
+
 
       - name: Create or Update Resource Manager Stack
         env:
