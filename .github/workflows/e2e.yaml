@@ -104,9 +104,6 @@ jobs:
               existing_drg_id: "",
               source_cidr: ["10.0.0.0/24"]
             }' > variables.json
-
-      - name: Validate variables.json
-        run: jq . variables.json
   
       - name: Set ZIP URL
         run: |
