@@ -119,9 +119,23 @@ jobs:
           OCI_REGION: us-phoenix-1
         run: |
           set -e
-
           # Download the zip file locally
-          curl -L "$ZIP_URL" -o cd3_stack.zip
+          #curl -L "$ZIP_URL" -o cd3_stack.zip
+
+          # Build full payload for stack creation
+          cat <<EOF > stack_payload.json
+          {
+            "compartmentId": "$COMPARTMENT_OCID",
+            "configSource": {
+              "configSourceType": "ZIP_UPLOAD",
+              "zipFileUri": "$ZIP_URL"
+            },
+            "displayName": "CD3-WorkVM-Stack-${{ github.ref_name }}",
+            "description": "Automated CD3 WorkVM Stack for ${{ github.ref_name }}",
+            "variables": $(cat variables.json)
+          }
+          EOF
+
       
           COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' variables.json)
           echo "Using COMPARTMENT_OCID: $COMPARTMENT_OCID"
@@ -131,8 +145,9 @@ jobs:
           STACK_ID=$(oci resource-manager stack create \
             --auth instance_principal \
             --compartment-id "$COMPARTMENT_OCID" \
-            --config-source cd3_stack.zip \
-            --variables file://variables.json \
+            #--config-source cd3_stack.zip \
+            --from-json file://stack_payload.json \
+           # --variables file://variables.json \
             --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" \
             --description "Automated CD3 WorkVM Stack for ${{ github.ref_name }}" \
             --region "$OCI_REGION" \
@@ -155,8 +170,9 @@ jobs:
             STACK_ID=$(oci resource-manager stack update \
               --auth instance_principal \
               --stack-id "$EXISTING_STACK_ID" \
-              --config-source cd3_stack.zip \
-              --variables file://variables.json \
+              #--config-source cd3_stack.zip \
+              --from-json file://stack_payload.json \
+             # --variables file://variables.json \
               --region "$OCI_REGION" \
               --query "data.id" --raw-output)
           fi
