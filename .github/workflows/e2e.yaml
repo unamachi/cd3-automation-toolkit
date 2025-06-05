@@ -110,39 +110,51 @@ jobs:
             echo "ZIP_URL=https://github.com/oracle-devrel/cd3-automation-toolkit/archive/refs/heads/testUpgrade.zip" >> $GITHUB_ENV
           fi
 
-      - name: Create/Update Resource Manager stack
+      - name: Create or Update Resource Manager Stack
         env:
-          OCI_REGION: "us-phoenix-1"
+          OCI_REGION: us-phoenix-1
         run: |
+          set -e
+      
           COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' variables.json)
-
+          echo "Using COMPARTMENT_OCID: $COMPARTMENT_OCID"
+          echo "Using ZIP_URL: $ZIP_URL"
+      
+          echo "Attempting to create stack..."
           STACK_ID=$(oci resource-manager stack create \
-            --auth instance_principal  \
+            --auth instance_principal \
             --compartment-id "$COMPARTMENT_OCID" \
             --config-source "$ZIP_URL" \
             --variables file://variables.json \
             --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" \
             --description "Automated CD3 WorkVM Stack for ${{ github.ref_name }}" \
             --region "$OCI_REGION" \
-            --query "data.id" --raw-output 2>/dev/null || true)
-
+            --query "data.id" --raw-output) || true
+      
           if [ -z "$STACK_ID" ]; then
-            EXISTING_STACK_ID=$(oci resource-manager stack list --compartment-id "$COMPARTMENT_OCID" --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" --region "$OCI_REGION" --query "data[0].id" --raw-output)
+            echo "Stack creation failed or already exists. Attempting to find and update existing stack..."
+            EXISTING_STACK_ID=$(oci resource-manager stack list \
+              --compartment-id "$COMPARTMENT_OCID" \
+              --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" \
+              --region "$OCI_REGION" \
+              --query "data[0].id" --raw-output)
+      
             if [ -z "$EXISTING_STACK_ID" ]; then
-              echo "Error: No existing stack found to update"
+              echo "❌ Error: No existing stack found to update"
               exit 1
             fi
-            echo "Updating existing stack $EXISTING_STACK_ID"
+      
+            echo "Updating existing stack: $EXISTING_STACK_ID"
             STACK_ID=$(oci resource-manager stack update \
+              --auth instance_principal \
               --stack-id "$EXISTING_STACK_ID" \
-              --auth instance_principal  \
               --config-source "$ZIP_URL" \
               --variables file://variables.json \
               --region "$OCI_REGION" \
               --query "data.id" --raw-output)
           fi
-
-          echo "STACK_ID=$STACK_ID"
+      
+          echo "✅ STACK_ID: $STACK_ID"
 
       - name: Apply Resource Manager stack
         env:
