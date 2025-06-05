@@ -64,43 +64,50 @@ jobs:
             fi
           done
 
-          # Generate variables.json (remove leading spaces to avoid JSON formatting issues)
-          cat << EOF > variables.json
-          {
-            "instance_compartment_strategy": "Use Existing Compartment",
-            "instance_compartment_ocid": "$COMPARTMENT_OCID",
-            "parent_compartment_ocid": "",
-            "new_compartment_name": "",
-            "instance_name": "workvm",
-            "instance_os_version": "Oracle-Linux-9",
-            "instance_shape": "VM.Standard3.Flex",
-            "instance_ocpus": 2,
-            "instance_ram": 8,
-            "boot_volume_size": 50,
-            "instance_ad": "AD-1",
-            "instance_fd": "FD-1",
-            "ssh_public_key": "$SSH_PUBLIC_KEY",
-            "vcn_strategy": "Use Existing VCN",
-            "vcn_compartment_ocid": "$VCN_COMPARTMENT_OCID",
-            "existing_vcn_id": "$EXISTING_VCN_ID",
-            "existing_subnet_id": "$EXISTING_SUBNET_ID",
-            "assign_publicip_existing_subnet": false,
-            "assign_existing_nsg": false,
-            "existing_nsg_id": "",
-            "vcn_name": "",
-            "vcn_cidr": "",
-            "vcn_dns_label": "",
-            "subnet_name": "",
-            "subnet_cidr": "",
-            "subnet_dns_label": "",
-            "subnet_type": "",
-            "assign_public_ip": false,
-            "drg_attachment": false,
-            "existing_drg_id": "",
-            "source_cidr": ["10.0.0.0/24"]
-          }
-          EOF
+          # Generate variables.json safely using jq
+          jq -n \
+            --arg instance_compartment_ocid "$COMPARTMENT_OCID" \
+            --arg vcn_compartment_ocid "$VCN_COMPARTMENT_OCID" \
+            --arg existing_vcn_id "$EXISTING_VCN_ID" \
+            --arg existing_subnet_id "$EXISTING_SUBNET_ID" \
+            --arg ssh_public_key "$SSH_PUBLIC_KEY" \
+            '{
+              instance_compartment_strategy: "Use Existing Compartment",
+              instance_compartment_ocid: $instance_compartment_ocid,
+              parent_compartment_ocid: "",
+              new_compartment_name: "",
+              instance_name: "workvm",
+              instance_os_version: "Oracle-Linux-9",
+              instance_shape: "VM.Standard3.Flex",
+              instance_ocpus: 2,
+              instance_ram: 8,
+              boot_volume_size: 50,
+              instance_ad: "AD-1",
+              instance_fd: "FD-1",
+              ssh_public_key: $ssh_public_key,
+              vcn_strategy: "Use Existing VCN",
+              vcn_compartment_ocid: $vcn_compartment_ocid,
+              existing_vcn_id: $existing_vcn_id,
+              existing_subnet_id: $existing_subnet_id,
+              assign_publicip_existing_subnet: false,
+              assign_existing_nsg: false,
+              existing_nsg_id: "",
+              vcn_name: "",
+              vcn_cidr: "",
+              vcn_dns_label: "",
+              subnet_name: "",
+              subnet_cidr: "",
+              subnet_dns_label: "",
+              subnet_type: "",
+              assign_public_ip: false,
+              drg_attachment: false,
+              existing_drg_id: "",
+              source_cidr: ["10.0.0.0/24"]
+            }' > variables.json
 
+      - name: Validate variables.json
+        run: jq . variables.json
+  
       - name: Set ZIP URL
         run: |
           echo "github.ref is: ${{ github.ref }}"
