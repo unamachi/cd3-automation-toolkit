@@ -120,7 +120,6 @@ jobs:
             --auth instance_principal  \
             --compartment-id "$COMPARTMENT_OCID" \
             --config-source "$ZIP_URL" \
-            --config-source-type ZIP_UPLOAD \
             --variables file://variables.json \
             --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" \
             --description "Automated CD3 WorkVM Stack for ${{ github.ref_name }}" \
@@ -138,7 +137,6 @@ jobs:
               --stack-id "$EXISTING_STACK_ID" \
               --auth instance_principal  \
               --config-source "$ZIP_URL" \
-              --config-source-type ZIP_UPLOAD \
               --variables file://variables.json \
               --region "$OCI_REGION" \
               --query "data.id" --raw-output)
