@@ -48,8 +48,11 @@ jobs:
           SSH_KEY_SECRET_OCID: ${{ secrets.SSH_KEY_SECRET_OCID }}
           OCI_REGION: us-phoenix-1
         run: |
-          TENANCY_OCID=$(oci iam tenancy get --auth instance_principal --query 'data.id' --raw-output)
-          USER_OCID=$(oci iam user list --query 'data[0].id' --raw-output --auth instance_principal)
+          TENANCY_OCID=$(oci iam region-subscription list \
+                             --auth instance_principal \
+                             --query 'data[0]."compartment-id"' \
+                             --raw-output)
+          # USER_OCID=$(oci iam user list --query 'data[0].id' --raw-output --auth instance_principal)
           
           # Verify secret OCIDs
           for OCID in "$COMPARTMENT_SECRET_OCID" "$VCN_COMPARTMENT_SECRET_OCID" "$VCN_ID_SECRET_OCID" "$SUBNET_ID_SECRET_OCID" "$SSH_KEY_SECRET_OCID"; do
@@ -82,7 +85,6 @@ jobs:
             --arg existing_subnet_id "$EXISTING_SUBNET_ID" \
             --arg ssh_public_key "$SSH_PUBLIC_KEY" \
             --arg tenancy_ocid "$TENANCY_OCID" \
-            --arg current_user_ocid "$USER_OCID" \
             --arg region "$OCI_REGION" \
             --arg source_cidr '["10.0.0.0/24"]' \
             '{
