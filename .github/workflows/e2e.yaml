@@ -33,10 +33,10 @@ jobs:
             export PATH=$HOME/bin:$PATH
           fi
 
-      - name: Install git
+      - name: Install git (Oracle Linux)
         run: |
           if ! command -v git &> /dev/null; then
-            sudo yum install -y git || sudo apt-get update && sudo apt-get install -y git
+            sudo yum install -y git
           fi
 
       - name: Retrieve secret contents from OCI Vault
