@@ -54,7 +54,7 @@ jobs:
                           --access-level ACCESSIBLE \
                           --include-root \
                           --raw-output \
-                          --query "data[?contains(\"id\",'tenancy')].id | [0] --auth instance_principal)
+                          --query "data[?contains(\"id\",'tenancy')].id | [0]" --auth instance_principal)
           # USER_OCID=$(oci iam user list --query 'data[0].id' --raw-output --auth instance_principal)
           
           # Verify secret OCIDs
