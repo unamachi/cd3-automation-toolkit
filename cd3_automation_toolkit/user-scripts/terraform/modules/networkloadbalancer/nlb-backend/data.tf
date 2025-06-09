@@ -1,12 +1,17 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 #######################################
 # Data Block - Network Load Balancer
 # Create Network Load Balancer Backend
 #######################################
 
 data "oci_core_instances" "nlb_instances" {
-  state          = "RUNNING"
+  #state          = "RUNNING"
+  filter {
+    name   = "state"
+    values = ["RUNNING","STOPPED"]
+  }
   compartment_id = var.instance_compartment
 }
 
@@ -21,6 +26,13 @@ data "oci_core_vnic_attachments" "nlb_instance_vnic_attachments" {
   count          = length(regexall("IP:*", var.ip_address)) == 0 ? 1 : 0
   compartment_id = var.instance_compartment
   instance_id    = merge(local.nlb_instance_ocid.ocid.*...)[split("NAME:", var.ip_address)[1]][0]
+  #dynamic "filter" {
+  #  for_each = var.vnic_vlan !=null ? [1] : []
+  #  content {
+  #    name   = "vlan_tag"
+  #    values = [var.vnic_vlan]
+  #  }
+  #}
 }
 
 # Filter on VNIC OCID

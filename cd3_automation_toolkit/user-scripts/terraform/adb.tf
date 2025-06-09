@@ -1,5 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 #############################
 ## Module Block - Autonomous database
 ## Create autonomous database
@@ -8,7 +9,7 @@ data "oci_core_subnets" "oci_subnets_adb" {
   # depends_on = [module.subnets] # Uncomment to create Network and FSS together
   #for_each       = var.adb != null ? var.adb : {}
   for_each       = { for k, v in var.adb : k => v if v.vcn_name != null }
-  compartment_id = each.value.network_compartment_id != null ? (length(regexall("ocid1.compartment.oc1*", each.value.network_compartment_id)) > 0 ? each.value.network_compartment_id : var.compartment_ocids[each.value.network_compartment_id]) : var.compartment_ocids[each.value.network_compartment_id]
+  compartment_id = each.value.network_compartment_id != null ? (length(regexall("ocid1.compartment.oc*", each.value.network_compartment_id)) > 0 ? each.value.network_compartment_id : var.compartment_ocids[each.value.network_compartment_id]) : var.compartment_ocids[each.value.network_compartment_id]
   display_name   = each.value.subnet_id
   vcn_id         = data.oci_core_vcns.oci_vcns_adb[each.key].virtual_networks.*.id[0]
 }
@@ -17,17 +18,17 @@ data "oci_core_vcns" "oci_vcns_adb" {
   # depends_on = [module.vcns] # Uncomment to create Network and FSS together
   #for_each       = var.adb != null ? var.adb : {}
   for_each       = { for k, v in var.adb : k => v if v.vcn_name != null }
-  compartment_id = each.value.network_compartment_id != null ? (length(regexall("ocid1.compartment.oc1*", each.value.network_compartment_id)) > 0 ? each.value.network_compartment_id : var.compartment_ocids[each.value.network_compartment_id]) : var.compartment_ocids[each.value.network_compartment_id]
+  compartment_id = each.value.network_compartment_id != null ? (length(regexall("ocid1.compartment.oc*", each.value.network_compartment_id)) > 0 ? each.value.network_compartment_id : var.compartment_ocids[each.value.network_compartment_id]) : var.compartment_ocids[each.value.network_compartment_id]
   display_name   = each.value.vcn_name
 }
 
 module "adb" {
   source   = "./modules/database/adb"
   for_each = var.adb != null ? var.adb : {}
-  # depends_on = [module.vcns, module.subnets]
+  # depends_on = [module.nsgs]
   admin_password             = each.value.admin_password
   character_set              = each.value.character_set
-  compartment_id             = each.value.compartment_id != null ? (length(regexall("ocid1.compartment.oc1*", each.value.compartment_id)) > 0 ? each.value.compartment_id : var.compartment_ocids[each.value.compartment_id]) : null
+  compartment_id             = each.value.compartment_id != null ? (length(regexall("ocid1.compartment.oc*", each.value.compartment_id)) > 0 ? each.value.compartment_id : var.compartment_ocids[each.value.compartment_id]) : null
   cpu_core_count             = each.value.cpu_core_count
   database_edition           = each.value.database_edition
   data_storage_size_in_tbs   = each.value.data_storage_size_in_tbs
@@ -38,10 +39,11 @@ module "adb" {
   display_name               = each.value.display_name
   license_model              = each.value.license_model
   ncharacter_set             = each.value.ncharacter_set
-  network_compartment_id     = each.value.network_compartment_id != null ? (length(regexall("ocid1.compartment.oc1*", each.value.network_compartment_id)) > 0 ? each.value.network_compartment_id : var.compartment_ocids[each.value.network_compartment_id]) : null
+  customer_contacts          = each.value.customer_contacts
+  network_compartment_id     = each.value.network_compartment_id != null ? (length(regexall("ocid1.compartment.oc*", each.value.network_compartment_id)) > 0 ? each.value.network_compartment_id : var.compartment_ocids[each.value.network_compartment_id]) : null
   network_security_group_ids = each.value.nsg_ids
   freeform_tags              = each.value.freeform_tags
-  subnet_id                  = each.value.subnet_id != null ? (length(regexall("ocid1.subnet.oc1*", each.value.subnet_id)) > 0 ? each.value.subnet_id : data.oci_core_subnets.oci_subnets_adb[each.key].subnets.*.id[0]) : null
+  subnet_id                  = each.value.subnet_id != null ? (length(regexall("ocid1.subnet.oc*", each.value.subnet_id)) > 0 ? each.value.subnet_id : data.oci_core_subnets.oci_subnets_adb[each.key].subnets.*.id[0]) : null
   vcn_name                   = each.value.vcn_name != null ? each.value.vcn_name : null
   whitelisted_ips            = each.value.whitelisted_ips
 

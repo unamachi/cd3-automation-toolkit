@@ -20,14 +20,11 @@ from commonTools import *
 # Required Inputs- CD3 excel file, Config file, prefix AND outdir
 ######
 # Execution of the code begins here
-def create_terraform_policies(inputfile, outdir, service_dir, prefix, config=DEFAULT_LOCATION):
+def create_terraform_policies(inputfile, outdir, service_dir, prefix, ct):
     # Declare variables
     filename = inputfile
-    configFileName = config
     sheetName = 'Policies'
     auto_tfvars_filename = '_' + sheetName.lower() + '.auto.tfvars'
-    ct = commonTools()
-    ct.get_subscribedregions(configFileName)
 
     outfile = {}
     oname = {}
@@ -210,11 +207,12 @@ def create_terraform_policies(inputfile, outdir, service_dir, prefix, config=DEF
     outfile[reg] = reg_out_dir + "/" + prefix + auto_tfvars_filename
 
     #If the excel sheet has <end> in first row; exit; no rows to process
-    if str(regions[0]) in commonTools.endNames:
-        print("No Data to write to the outfile..Exiting!")
-        exit(1)
-    tempStr = "".join([s for s in tempStr.strip().splitlines(True) if s.strip("\r\n").strip()])
-    oname[reg] = open(outfile[reg], 'w')
-    oname[reg].write(tempStr)
-    oname[reg].close()
-    print(outfile[reg] + " for Policies has been created for region " + reg)
+    if regions.empty or str(regions[0]) in commonTools.endNames:
+        tempStr = ""
+
+    if tempStr!="":
+        tempStr = "".join([s for s in tempStr.strip().splitlines(True) if s.strip("\r\n").strip()])
+        oname[reg] = open(outfile[reg], 'w')
+        oname[reg].write(tempStr)
+        oname[reg].close()
+        print(outfile[reg] + " for Policies has been created for region " + reg)

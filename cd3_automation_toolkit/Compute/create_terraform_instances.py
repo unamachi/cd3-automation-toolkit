@@ -22,18 +22,15 @@ from jinja2 import Environment, FileSystemLoader
 
 # If input is CD3 excel file
 # Execution of the code begins here
-def create_terraform_instances(inputfile, outdir, service_dir, prefix, config):
+def create_terraform_instances(inputfile, outdir, service_dir, prefix, ct):
     boot_policy_tfStr = {}
     tfStr = {}
     ADS = ["AD1", "AD2", "AD3"]
 
     filename = inputfile
-    configFileName = config
 
     sheetName = "Instances"
     auto_tfvars_filename = prefix + '_' + sheetName.lower() + '.auto.tfvars'
-    ct = commonTools()
-    ct.get_subscribedregions(configFileName)
 
     # Load the template file
     file_loader = FileSystemLoader(f'{Path(__file__).parent}/templates')
@@ -56,7 +53,7 @@ def create_terraform_instances(inputfile, outdir, service_dir, prefix, config):
         tfStr[eachregion] = ''
         boot_policy_tfStr[eachregion] = ''
 
-    subnets = parseSubnets(filename)
+    #subnets = parseSubnets(filename)
 
     for i in df.index:
         region = str(df.loc[i, 'Region'])
@@ -96,14 +93,16 @@ def create_terraform_instances(inputfile, outdir, service_dir, prefix, config):
                 df.loc[i, 'Shape']).lower() == 'nan' or str(df.loc[i, 'Compartment Name']).lower() == 'nan' or str(
             df.loc[i, 'Pub Address']).lower() == 'nan' or str(
             df.loc[i, 'Availability Domain(AD1|AD2|AD3)']).lower() == 'nan' or str(
-            df.loc[i, 'Subnet Name']).lower() == 'nan' or str(df.loc[i, 'Source Details']).lower() == 'nan'):
+            df.loc[i, 'Network Details']).lower() == 'nan' or str(df.loc[i, 'Source Details']).lower() == 'nan'):
             print(
-                "\nOne/All of the Column/Columns from Region, Shape, Compartment Name, Availability Domain, Display Name, Pub Address, Source Details and Subnet Name is empty in Instances sheet of CD3..exiting...Please check.")
+                "\nOne/All of the Column/Columns from Region, Shape, Compartment Name, Availability Domain, Display Name, Pub Address, Source Details and Network Details is empty in Instances sheet of CD3..exiting...Please check.")
             exit(1)
 
         # Perform the plugin match
         plugin_match = None
         plugin_column = fnmatch.filter(df.columns.tolist(), 'Plugin*')
+
+        source_details=[]
         for columnname in dfcolumns:
 
             # Column value
@@ -138,25 +137,30 @@ def create_terraform_instances(inputfile, outdir, service_dir, prefix, config):
                     columnvalue = columnvalue.strip()
                     tempdict = {'shape': [columnvalue]}
 
-            if columnname == "Subnet Name":
-                subnet_tf_name = columnvalue.strip()
-                if ("ocid1.subnet.oc1" in subnet_tf_name):
-                    network_compartment_id = ""
+            subnet_id = ''
+            network_compartment_id = ''
+            vcn_name = ''
+            if columnname == "Network Details":
+                columnvalue = columnvalue.strip()
+                if ("ocid1.subnet.oc" in columnvalue):
+                    network_compartment_id = "root"
                     vcn_name = ""
-                    subnet_id = subnet_tf_name
-                else:
-                    try:
-                        key = region, subnet_tf_name
-                        network_compartment_id = subnets.vcn_subnet_map[key][0]
-                        vcn_name = subnets.vcn_subnet_map[key][1]
-                        subnet_id = subnets.vcn_subnet_map[key][2]
-                    except Exception as e:
-                        print("Invalid Subnet Name specified for row " + str(
-                            i + 3) + ". It Doesnt exist in Subnets sheet. Exiting!!!")
-                        exit()
-
-                tempdict = {'network_compartment_id': commonTools.check_tf_variable(network_compartment_id),
-                            'vcn_name': vcn_name,
+                    subnet_id = columnvalue
+                elif columnvalue.lower() != 'nan' and columnvalue.lower() != '':
+                    if len(columnvalue.split("@")) == 2:
+                        network_compartment_id = commonTools.check_tf_variable(columnvalue.split("@")[0].strip())
+                        vcn_subnet_name = columnvalue.split("@")[1].strip()
+                    else:
+                        network_compartment_id = commonTools.check_tf_variable(
+                            str(df.loc[i, 'Compartment Name']).strip())
+                        vcn_subnet_name = columnvalue
+                    if ("::" not in vcn_subnet_name):
+                        print("Invalid Network Details format specified for row " + str(i + 3) + ". Exiting!!!")
+                        exit(1)
+                    else:
+                        vcn_name = vcn_subnet_name.split("::")[0].strip()
+                        subnet_id = vcn_subnet_name.split("::")[1].strip()
+                tempdict = {'network_compartment_id': network_compartment_id, 'vcn_name': vcn_name,
                             'subnet_id': subnet_id}
 
             if columnname == 'Display Name':
@@ -220,6 +224,22 @@ def create_terraform_instances(inputfile, outdir, service_dir, prefix, config):
                         ssh_key_var_name = columnvalue.strip()
                     tempdict = {'ssh_key_var_name': ssh_key_var_name}
 
+            if columnname == "Source Details":
+                if columnvalue.strip() != '' and columnvalue.strip().lower() != 'nan':
+                    if "ocid1.image.oc" in columnvalue.strip():
+                        ocid = columnvalue.strip()
+                        type = "image"
+                        source_details.append(type)
+                        source_details.append(ocid)
+                    elif "ocid1.bootvolume.oc" in columnvalue.strip():
+                        ocid = columnvalue.strip()
+                        type = "bootVolume"
+                        source_details.append(type)
+                        source_details.append(ocid)
+                    elif "::" in columnvalue.strip():
+                        source_details = columnvalue.strip().split("::")
+                    tempdict = {'source_details': source_details}
+
             columnname = commonTools.check_column_headers(columnname)
             tempStr[columnname] = str(columnvalue).strip()
             tempStr.update(tempdict)
@@ -239,9 +259,6 @@ def create_terraform_instances(inputfile, outdir, service_dir, prefix, config):
             src = "##Add New Instances for " + reg.lower() + " here##"
             tfStr[reg] = template.render(count=0, region=reg).replace(src, tfStr[reg] + "\n" + src)
             tfStr[reg] = "".join([s for s in tfStr[reg].strip().splitlines(True) if s.strip("\r\n").strip()])
-
-            resource = sheetName.lower()
-            commonTools.backup_file(reg_out_dir + "/", resource, auto_tfvars_filename)
 
             # Write to TF file
             outfile = reg_out_dir + "/" + auto_tfvars_filename

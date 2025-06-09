@@ -1,6 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 #######################################
 # Resource Block - Network Load Balancer
 # Create Network Load Balancer
@@ -12,9 +12,11 @@ resource "oci_network_load_balancer_network_load_balancer" "network_load_balance
   display_name                   = var.display_name
   subnet_id                      = var.subnet_id
   is_preserve_source_destination = var.is_preserve_source_destination
+  is_symmetric_hash_enabled      = var.is_symmetric_hash_enabled
   is_private                     = var.is_private
   network_security_group_ids     = var.network_security_group_ids != null ? (local.nsg_ids == [] ? ["INVALID NSG Name"] : local.nsg_ids) : null
   nlb_ip_version                 = var.nlb_ip_version
+  assigned_private_ipv4          = var.assigned_private_ipv4
   defined_tags                   = var.defined_tags
   freeform_tags                  = var.freeform_tags
 
@@ -26,6 +28,6 @@ resource "oci_network_load_balancer_network_load_balancer" "network_load_balance
     }
   }
   lifecycle {
-    ignore_changes = [reserved_ips]
+    ignore_changes = [reserved_ips, assigned_private_ipv4]
   }
 }

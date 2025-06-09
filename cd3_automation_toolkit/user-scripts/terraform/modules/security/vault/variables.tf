@@ -1,5 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 #################################
 ## Variables Block - Security
 ## Create Vault
@@ -34,3 +35,7 @@ variable "display_name" {
   type        = string
 }
 
+variable "replica_region" {
+  description = "The region to be created replica to. When updated, replica will be deleted from old region, and created to updated region."
+  type = string
+}

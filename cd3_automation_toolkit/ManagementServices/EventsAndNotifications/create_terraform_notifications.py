@@ -20,16 +20,13 @@ from commonTools import *
 ######
 
 # Execution of the code begins here
-def create_terraform_notifications(inputfile, outdir, service_dir, prefix, config=DEFAULT_LOCATION):
+def create_terraform_notifications(inputfile, outdir, service_dir, prefix, ct):
     filename = inputfile
     outdir = outdir
     sheetName="Notifications"
     topics_auto_tfvars_filename = '_' + sheetName.lower() + '-topics.auto.tfvars'
     subs_auto_tfvars_filename = '_' + sheetName.lower() + '-subscriptions.auto.tfvars'
 
-    configFileName = config
-    ct = commonTools()
-    ct.get_subscribedregions(configFileName)
     x = datetime.datetime.now()
     date = x.strftime("%f").strip()
     tempStr={}
@@ -87,7 +84,7 @@ def create_terraform_notifications(inputfile, outdir, service_dir, prefix, confi
         # Check if values are entered for mandatory fields
         if str(df.loc[i, 'Region']).lower() == 'nan' or str(df.loc[i, 'Compartment Name']).lower() == 'nan' or str(df.loc[i, 'Topic']).lower() == 'nan' :
             print("\nThe values for Region, Compartment, Topic cannot be left empty. Please enter a value and try again !!")
-            exit()
+            exit(1)
         for columnname in dfcolumns:
             # Column value
             columnvalue = str(df[columnname][i])
@@ -121,7 +118,7 @@ def create_terraform_notifications(inputfile, outdir, service_dir, prefix, confi
                 tempdict = {'topic_tf_name': tf_name_topic}
 
             if columnname == "Description":
-                tempdict = {'topic_description': columnvalue}
+                tempdict = {'description': columnvalue}
 
             if columnname == "Protocol":
                 columnvalue = columnvalue.strip()
@@ -132,7 +129,7 @@ def create_terraform_notifications(inputfile, outdir, service_dir, prefix, confi
             if columnname == "Endpoint":
                 endpoint = columnvalue.strip()
                 tempdict = {'endpoint': endpoint}
-          
+
             columnname = commonTools.check_column_headers(columnname)
             tempStr[columnname] = str(columnvalue).strip()
             tempStr.update(tempdict)

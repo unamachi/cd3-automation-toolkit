@@ -17,14 +17,10 @@ from commonTools import *
 ######
 
 # Execution of the code begins here
-def create_terraform_dns_rrsets(inputfile, outdir, service_dir, prefix, config=DEFAULT_LOCATION):
+def create_terraform_dns_rrsets(inputfile, outdir, service_dir, prefix, ct):
     filename = inputfile
-    configFileName = config
     sheetName = "DNS-Views-Zones-Records"
     auto_tfvars_filename = prefix + "_"+sheetName.lower()+".auto.tfvars"
-
-    ct = commonTools()
-    ct.get_subscribedregions(configFileName)
 
     outfile = {}
     oname = {}
@@ -76,13 +72,16 @@ def create_terraform_dns_rrsets(inputfile, outdir, service_dir, prefix, config=D
             print(
                 "\nRegion, Compartment Name, View Name fields are mandatory. Please enter a value and try again !!")
             print("\n** Exiting **")
-            exit()
+            exit(1)
 
         # set key for template items
         view_name = str(df["View Name"][i]).strip()
         zone_name = str(df["Zone"][i]).strip()
         domain = str(df["Domain"][i]).strip()
         rtype = str(df["RType"][i]).strip()
+        if 'nan' in [view_name,zone_name,domain,rtype]:
+            print(f'Required parameters for record creation are missing. Skipping record creation for row : {i+3}')
+            continue
         rrset_tf_name = str(view_name + "_" + zone_name+ "_" + domain+ "_" + rtype).replace(".", "_")
         # Assign value to item key variable in template
         tempStr['rrset_tf_name'] = rrset_tf_name

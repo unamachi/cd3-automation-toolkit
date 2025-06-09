@@ -1,5 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 ############################
 # Resource Block - Load Balancer
 # Create Load Balancer Backend Set
@@ -13,6 +14,7 @@ resource "oci_load_balancer_backend_set" "backend_set" {
 
     #Optional
     interval_ms         = var.interval_ms
+    is_force_plain_text = var.is_force_plain_text
     port                = var.port
     response_body_regex = var.response_body_regex
     retries             = var.retries

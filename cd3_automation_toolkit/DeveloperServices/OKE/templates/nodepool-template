@@ -1,6 +1,7 @@
 {% if count == 0 %}
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 #############################
 # Developer Services
 # OKE Nodepool - tfvars
@@ -39,7 +40,7 @@ nodepools = {
         boot_volume_size_in_gbs = {{ boot_volume_size_in_gbs }}
         {% endif %}
         {% if oke_labels and oke_labels != 'nan' and defined_tags != '' and oke_labels != [['nan']] %}
-      {% if oke_labels[0] %}
+        {% if oke_labels[0] %}
         initial_node_labels = {
         {% for tags in oke_labels  %}
             {% if not loop.last %}
@@ -53,6 +54,9 @@ nodepools = {
        {% endif %}
 
         availability_domain = {{ availability_domain }}
+        {% if fault_domains %}
+        fault_domains       = [{{ fault_domains }}]
+        {% endif %}
         network_compartment_id = "{{ network_compartment_tf_name }}"
         vcn_name = "{{ vcn_name }}"
         subnet_id = "{{ worker_node_subnet }}"
@@ -73,6 +77,9 @@ nodepools = {
         {% endif %}
         {% if nodepool_nsgs %}
         worker_nsg_ids = [{{ nodepool_nsgs }}]
+        {% endif %}
+        {% if nodepool_kms_key_id %}
+        nodepool_kms_key_id = "{{ nodepool_kms_key_id }}"
         {% endif %}
     {#  ##Do not modify below this line##  #}
     {#                                     #}
@@ -106,7 +113,7 @@ nodepools = {
     {#  ###Section for adding Defined and Freeform Tags ends here###  #}
 
         {% if ssh_key_var_name != '' %}
-        ssh_authorized_keys  = "{{ ssh_key_var_name }}"
+        ssh_public_key  = "{{ ssh_key_var_name }}"
         {% endif %}
         {#  ###Section for adding Defined and Freeform Tags###  #}
     {#  ##Do not modify below this line##  #}

@@ -1,5 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 ############################
 # Variable Block - Storage
 # Create Export Options
@@ -27,4 +28,8 @@ variable "key_name" {
 
 variable "nfs_export_options" {
   type = map(any)
+}
+variable "is_idmap_groups_for_sys_auth" {
+  type    = bool
+  default = null
 }

@@ -8,6 +8,12 @@
         "Description" : "description",
         "Name" : "name"
     },
+    "Users" :
+    {
+        "Family Name" : "family_name",
+        "User Name" : "name",
+        "MFA Status" : "urn_ietf_params_scim_schemas_oracle_idcs_extension_mfa_user.mfa_status"
+    },
     "Policies" :
     {
        "Description" : "description",
@@ -92,6 +98,7 @@
 	},
 	"FSS" :
 	{
+
 	},
 	"BlockVolumes" :
 	{
@@ -105,7 +112,7 @@
     },
     "LB-BackendSet-BackendServer" :
     {
-        "Backend ServerComp&ServerName:Port" : "backend_server_name:port",
+        "Backend ServerComp@ServerName:Port" : "backend_server_name:port",
         "Backend Set Name" : "backend_set_name",
         "Certificate Name or OCID" : "certificates",
         "Backend Policy(LEAST_CONNECTIONS|ROUND_ROBIN|IP_HASH)" : "policy",
@@ -144,6 +151,10 @@
     {
         "Path Route Set Name" : "name"
     },
+     "LB-RoutingPolicy":
+    {
+       "Display Name" : "display_name"
+    },
     "Common-LBR-Headers" :
     {
         "Region" : "region",
@@ -164,7 +175,8 @@
         "Service CIDR Block" : "services_cidr",
         "Pod CIDR Block" : "pods_cidr",
         "API Endpoint NSGs" : "nsg_ids",
-        "CompartmentName&Node Pool Name" : "nodepool_display_name"
+        "CompartmentName@Node Pool Name" : "nodepool_display_name",
+        "Policy KMS Key ID" : "image_policy_config.key_details.kms_key_id"
     },
 
     "DBSystems-VM-BM" :
@@ -234,10 +246,10 @@
     "NLB-BackendSets-BackendServers" :
     {
         "Is Preserve Source(True|False)" : "is_preserve_source",
-        "Backend ServerComp&ServerName:Port" : "backend_server_name:port",
+        "Backend ServerComp@ServerName:Port" : "backend_server_name:port",
         "Backend Set Name" : "backend_set_name",
         "Backend Policy(FIVE_TUPLE|THREE_TUPLE|TWO_TUPLE)" : "policy",
-        "Backend HealthCheck Protocol(HTTP|HTTPS|TCP|UDP)" : "protocol",
+        "Backend HealthCheck Protocol(HTTP|HTTPS|TCP|UDP|DNS)" : "protocol",
         "Backend HealthCheck Port" : "port",
         "Backend HealthCheck URL" : "url_path",
         "Backend HealthCheck Return Code" : "return_code",
@@ -262,6 +274,51 @@
     },
     "Buckets" : {},
     "DNS-Views-Zones-Records" : {},
-    "DNS-Resolvers" : {}
+    "DNS-Resolvers" : {},
+    "KMS" :{},
+    "Quotas" : {},
+    "Budgets" : {},
+    "MySQL-DBSystems" :
+    {
+        "Region" : "region",
+        "Compartment Name" : "compartment_id",
+        "Display Name" : "display_name",
+        "Description" : "description",
+        "Hostname Label" : "hostname_label",
+        "HA" : "is_highly_available",
+        "Availability Domain(AD1|AD2|AD3)" : "availability_domain",
+        "Fault Domain" : "fault_domain",
+        "Network Details" : "subnet_id",
+        "Shape" : "shape_name",
+        "Username" : "admin_username",
+        "Password" : "password",
+        "IP Address" : "ip_address",
+        "Back up policy is enabled" : "backup_policy.is_enabled",
+        "Backup policy pitr policy is enabled" : "backup_policy.pitr_policy.is_enabled",
+        "Backup policy Retention in days" : "backup_policy.retention_in_days",
+        "Backup policy window start time" : "backup_policy.window_start_time",
+        "Crash Recovery is Enabled" : "crash_recovery",
+        "Data Storage (in Gbs)" : "data_storage_size_in_gbs",
+        "Database Management is Enabled" : "database_management_status",
+        "Deletion policy automatic backup retention" : "deletion_policy.automatic_backup_retention",
+        "Deletion policy final backup" : "deletion_policy.final_backup",
+        "Deletion policy is deleted protected" : "deletion_policy.is_delete_protected",
+        "Maintenance window start time" : "maintenance.window_start_time",
+        "Port" : "port",
+        "Port_x" : "port_x",
+        "Source Type" : "source.source_type",
+        "Configuration Id" : "configuration_id",
+        "Defined Tags" : "defined_tags"
+    },
+    "MySQL-Configurations" :
+    {
+        "Region" : "region",
+        "Compartment Name" : "compartment_id",
+        "Display Name" : "display_name",
+        "Description" : "description",
+        "Shape Name" : "shape",
+        "users_variable_name" : "users_variable_name",
+        "users_variable_value" : "users_variable_value"
+    }
 
 }

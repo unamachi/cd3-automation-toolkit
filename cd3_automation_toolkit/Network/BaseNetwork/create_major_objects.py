@@ -25,13 +25,9 @@ from commonTools import *
 # prefix
 ######
 # Code execution starts here
-def create_major_objects(inputfile, outdir, service_dir, prefix, non_gf_tenancy, config, modify_network=False):
+def create_major_objects(inputfile, outdir, service_dir, prefix, ct, non_gf_tenancy, modify_network=False):
     # Declare Variables
     filename = inputfile
-    configFileName = config
-
-    ct = commonTools()
-    ct.get_subscribedregions(configFileName)
 
     outfile = {}
     oname = {}
@@ -110,13 +106,10 @@ def create_major_objects(inputfile, outdir, service_dir, prefix, non_gf_tenancy,
                     f.write(updated_data)
                 f.close()
 
-    def create_drg_and_attachments(inputfile, outdir, config):
+    def create_drg_and_attachments(inputfile, outdir):
         # Declare Variables
         filename = inputfile
-        configFileName = config
 
-        ct = commonTools()
-        ct.get_subscribedregions(configFileName)
         drg_attach_skeleton = ''
         drgstr_skeleton = ''
 
@@ -132,14 +125,14 @@ def create_major_objects(inputfile, outdir, service_dir, prefix, non_gf_tenancy,
         for region in drgv2.drg_names.keys():
             for drg in drgv2.drg_names[region]:
                 if (os.path.exists(outdir + "/" + region +  "/"+service_dir + "/obj_names.safe")):
-                    prevline = ""
+                    #prevline = ""
                     with open(outdir + "/" + region + "/"+service_dir +"/obj_names.safe") as f:
                         for line in f:
                             if (drg in line):
-                                if prevline!= "\n":
-                                    drg_version = prevline.split("::::")[1].strip()
+                                #if prevline!= "\n":
+                                drg_version = line.split("::::")[2].strip()
                                 break
-                            prevline = line
+                            #prevline = line
                 drg_versions[region,drg] = drg_version
                 if (drg_version == "DRGv2"):
                     for drg_auto_rt_name in commonTools.drg_auto_RTs:
@@ -201,10 +194,10 @@ def create_major_objects(inputfile, outdir, service_dir, prefix, non_gf_tenancy,
                         try:
                             if (vcn_name.lower() != "nan" and vcns.vcns_having_drg[vcn_name,region] != drg):
                                 print("ERROR!!! VCN "+vcn_name +" in column Attached To is not as per DRG Required column of VCNs Tab..Exiting!")
-                                exit()
+                                exit(1)
                         except KeyError:
                             print("ERROR!!! VCN "+vcn_name+" in column Attached To is not as per VCN Name column of VCNs Tab..Exiting!")
-                            exit()
+                            exit(1)
 
         # Process Rows
         ip=1
@@ -250,7 +243,10 @@ def create_major_objects(inputfile, outdir, service_dir, prefix, non_gf_tenancy,
 
                 if columnname == "DRG Name":
                     drg_name = columnvalue
-                    drg_tf_name = commonTools.check_tf_variable(drg_name)
+                    if ("ocid1.drg.oc" not in drg_name):
+                        drg_tf_name = commonTools.check_tf_variable(drg_name)
+                    else:
+                        drg_tf_name = drg_name
                     tempdict['drg_tf_name'] = drg_tf_name
 
                 if (columnname == 'Attached To'):
@@ -266,12 +262,17 @@ def create_major_objects(inputfile, outdir, service_dir, prefix, non_gf_tenancy,
 
                             # Get DRG Attach Name
                             drg_attach_name=''
+                            '''
                             if (os.path.exists(outdir + "/" + region + "/"+service_dir + "/obj_names.safe")):
                                 with open(outdir + "/" + region + "/"+service_dir + "/obj_names.safe") as f:
                                     for line in f:
                                         if ("drgattachinfo::::" + vcn_name + "::::" + drg_name in line):
                                             drg_attach_name = line.split("::::")[3].strip()
                                             break
+                            '''
+                            if (len(columnvalues)==3):
+                                drg_attach_name = columnvalues[2].strip()
+
                             if (drg_attach_name == ""):
                                 drg_attach_name = drg_name + "_"+vcn_name+"_attach"
 
@@ -287,17 +288,23 @@ def create_major_objects(inputfile, outdir, service_dir, prefix, non_gf_tenancy,
 
                             tempStr.update(tempdict)
                             # Get VCN DRG RT table
-                            vcn_drg_rt_name = ""
+                            #vcn_drg_rt_name = ""
+
+                            vcn_drg_rt_name = vcns.vcn_drgs[vcn_name,region][1]
+                            '''
                             if (os.path.exists(outdir + "/" + region + "/"+service_dir + "/obj_names.safe")):
                                 with open(outdir + "/" + region + "/"+service_dir + "/obj_names.safe") as f:
                                     for line in f:
                                         if ("drginfo::::" + vcn_name + "::::" + drg_name in line):
                                             vcn_drg_rt_name = line.split("::::")[3].strip()
                                             break
+                            
                             if (vcn_drg_rt_name == ""):
                                 vcn_drg_rt_var = vcn_name + "_Route Table associated with DRG-" + drg_name
+                            '''
                             # Route table associated with DRG inside VCN is not existing
-                            elif (vcn_drg_rt_name == "None"):
+                            # Dont Attach any Route Table with DRG if it is ''
+                            if (vcn_drg_rt_name == ""):
                                 vcn_drg_rt_var = ""
                             else:
                                 vcn_drg_rt_var = vcn_name + "_" + vcn_drg_rt_name
@@ -323,6 +330,8 @@ def create_major_objects(inputfile, outdir, service_dir, prefix, non_gf_tenancy,
                     #if it is Auto Generated RT(during export) dont attach any RT to DRG attachment
                     if(columnvalue in commonTools.drg_auto_RTs):
                         drg_rt_tf_name = ''
+                    elif("ocid1.drgroutetable.oc" in columnvalue):
+                        drg_rt_tf_name = columnvalue
                     elif(columnvalue!=''):
                         drg_rt_tf_name = commonTools.check_tf_variable(drg_name + "_" + columnvalue)
                     tempStr['drg_rt_tf_name'] = drg_rt_tf_name
@@ -336,7 +345,9 @@ def create_major_objects(inputfile, outdir, service_dir, prefix, non_gf_tenancy,
                 drgstr_skeleton = drg_template.render(count=0)[:-1]
                 region_included_drg.append(region)
             tempStr['drg_version'] = drg_versions[region, drg_name]
-            drgstr = drg_template.render(tempStr)
+            drgstr=''
+            if ("ocid1.drg.oc" not in drg_tf_name):
+                drgstr = drg_template.render(tempStr)
 
             if(attachedto=="attached"):
                 drg_attach = drg_attach_template.render(tempStr)
@@ -356,7 +367,8 @@ def create_major_objects(inputfile, outdir, service_dir, prefix, non_gf_tenancy,
             if region in region_included_drg:
                 if(drg_attach_tfStr[region]!=''):
                     drg_attach_tfStr[region] = drg_attach_skeleton + drg_attach_tfStr[region]
-                drg_tfStr[region] = drgstr_skeleton + drg_tfStr[region]
+                if(drg_tfStr[region] != ''):
+                    drg_tfStr[region] = drgstr_skeleton + drg_tfStr[region]
 
     def processVCN(tempStr):
         rt_tf_name = ''
@@ -364,11 +376,20 @@ def create_major_objects(inputfile, outdir, service_dir, prefix, non_gf_tenancy,
         region = tempStr['region'].lower().strip()
         vcn_name = tempStr['vcn_name'].strip()
         vcn_tf_name = commonTools.check_tf_variable(vcn_name)
-        vcn_drg = tempStr['drg_required'].strip()
-        vcn_igw = tempStr['igw_required'].strip()
-        vcn_ngw = tempStr['ngw_required'].strip()
-        vcn_sgw = tempStr['sgw_required'].strip()
+
+        vcn_drg = vcns.vcn_drgs[vcn_name,region][0]
+        vcn_igw = vcns.vcn_igws[vcn_name,region][0]
+        vcn_ngw = vcns.vcn_ngws[vcn_name,region][0]
+        vcn_sgw = vcns.vcn_sgws[vcn_name,region][0]
+
+        vcn_igw_rt = vcns.vcn_igws[vcn_name, region][1]
+        vcn_ngw_rt = vcns.vcn_ngws[vcn_name, region][1]
+        vcn_sgw_rt = vcns.vcn_sgws[vcn_name, region][1]
+
+        vcns.vcn_igws
+
         vcn_lpg = tempStr['lpg_required']
+
         tempStr['vcn_tf_name'] = vcn_tf_name
         #vcn_lpg = tempStr['lpg_required'].strip()
         hub_spoke_none = tempStr['hub_spoke_peer_none'].strip()
@@ -400,8 +421,19 @@ def create_major_objects(inputfile, outdir, service_dir, prefix, non_gf_tenancy,
 
             igw_tf_name = vcn_name + "_" + igw_name
             igw_tf_name = commonTools.check_tf_variable(igw_tf_name)
-
             tempStr['igw_tf_name'] = igw_tf_name
+
+            if (vcn_igw_rt == ""):
+                vcn_igw_rt_var = ""
+            else:
+                vcn_igw_rt_var = vcn_name + "_" + vcn_igw_rt
+
+            if (vcn_igw_rt_var != ""):
+                vcn_igw_rt_tf_name = commonTools.check_tf_variable(vcn_igw_rt_var)
+            else:
+                vcn_igw_rt_tf_name = ""
+            tempStr['vcn_igw_route_table_id'] = vcn_igw_rt_tf_name
+
             tempStr.update(tempdict)
 
         if vcn_sgw != "n":
@@ -416,7 +448,17 @@ def create_major_objects(inputfile, outdir, service_dir, prefix, non_gf_tenancy,
 
             tempStr['sgw_tf_name'] = sgw_tf_name
             tempStr['sgw_name'] = sgw_name
-            tempStr['sgw_required'] = tempStr['sgw_required'].lower().strip()
+
+            if (vcn_sgw_rt == ""):
+                vcn_sgw_rt_var = ""
+            else:
+                vcn_sgw_rt_var = vcn_name + "_" + vcn_sgw_rt
+
+            if (vcn_sgw_rt_var != ""):
+                vcn_sgw_rt_tf_name = commonTools.check_tf_variable(vcn_sgw_rt_var)
+            else:
+                vcn_sgw_rt_tf_name = ""
+            tempStr['vcn_sgw_route_table_id'] = vcn_sgw_rt_tf_name
 
         if vcn_ngw != 'n':
             # use default name
@@ -430,7 +472,17 @@ def create_major_objects(inputfile, outdir, service_dir, prefix, non_gf_tenancy,
 
             tempStr['ngw_name'] = ngw_name
             tempStr['ngw_tf_name'] = ngw_tf_name
-            tempStr['ngw_required'] = tempStr['ngw_required'].lower().strip()
+
+            if (vcn_ngw_rt == ""):
+                vcn_ngw_rt_var = ""
+            else:
+                vcn_ngw_rt_var = vcn_name + "_" + vcn_ngw_rt
+
+            if (vcn_ngw_rt_var != ""):
+                vcn_ngw_rt_tf_name = commonTools.check_tf_variable(vcn_ngw_rt_var)
+            else:
+                vcn_ngw_rt_tf_name = ""
+            tempStr['vcn_ngw_route_table_id'] = vcn_ngw_rt_tf_name
 
         if (vcn_lpg != 'n'):
             count_lpg = 0
@@ -617,7 +669,7 @@ def create_major_objects(inputfile, outdir, service_dir, prefix, non_gf_tenancy,
 
         processVCN(tempStr)
 
-    create_drg_and_attachments(inputfile, outdir, config)
+    create_drg_and_attachments(inputfile, outdir)
 
     #Write outfiles
     for reg in ct.all_regions:

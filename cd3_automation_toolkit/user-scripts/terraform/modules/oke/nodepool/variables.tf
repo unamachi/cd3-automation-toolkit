@@ -1,6 +1,6 @@
-# Copyright 2017, 2019 Oracle Corporation and/or affiliates.
-# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 variable "tenancy_ocid" {
   type        = string
   description = "The OCID of the tenancy"
@@ -84,6 +84,12 @@ variable "cni_type" {
   default     = null
 }
 
+variable "fault_domains" {
+  type        = list(any)
+  description = "fault domain"
+  default     = null
+}
+
 variable "max_pods_per_node" {
   type        = number
   description = "The maximum nuber of pods in a node"
@@ -141,6 +147,11 @@ variable "boot_volume_size_in_gbs" {
 variable "is_pv_encryption_in_transit_enabled" {
   type        = bool
   description = "Whether in-transit encryptions is enabled for data in persistent volume"
+}
+
+variable "kms_key_id" {
+  type    = string
+  default = null
 }
 
 variable "node_defined_tags" {

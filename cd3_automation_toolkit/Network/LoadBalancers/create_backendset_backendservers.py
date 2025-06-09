@@ -18,19 +18,16 @@ from jinja2 import Environment, FileSystemLoader
 # Required Inputs-CD3 excel file, Config file AND outdir
 ######
 # Execution of the code begins here
-def create_backendset_backendservers(inputfile, outdir, service_dir, prefix, config=DEFAULT_LOCATION):
+def create_backendset_backendservers(inputfile, outdir, service_dir, prefix, ct):
     # Load the template file
     file_loader = FileSystemLoader(f'{Path(__file__).parent}/templates')
     env = Environment(loader=file_loader, keep_trailing_newline=True)
     beset = env.get_template('backend-set-template')
     beserver = env.get_template('backends-template')
     filename = inputfile
-    configFileName = config
     sheetName = "LB-BackendSet-BackendServer"
     lb_auto_tfvars_filename = prefix + "_"+sheetName.lower()+".auto.tfvars"
 
-    ct = commonTools()
-    ct.get_subscribedregions(configFileName)
     beset_str = {}
     beserver_str = {}
 
@@ -58,6 +55,10 @@ def create_backendset_backendservers(inputfile, outdir, service_dir, prefix, con
         beset_str[reg] = ''
         beserver_str[reg] = ''
 
+        srcdir = outdir + "/" + reg + "/" + service_dir + "/"
+        resource = sheetName.lower()
+        commonTools.backup_file(srcdir, resource, lb_auto_tfvars_filename)
+
     # List of the column headers
     dfcolumns = df.columns.values.tolist()
 
@@ -74,7 +75,7 @@ def create_backendset_backendservers(inputfile, outdir, service_dir, prefix, con
 
         if region not in ct.all_regions:
             print("\nInvalid Region; It should be one of the values mentioned in VCN Info tab...Exiting!!")
-            exit()
+            exit(1)
 
         # temporary dictionaries
         tempStr= {}
@@ -117,7 +118,7 @@ def create_backendset_backendservers(inputfile, outdir, service_dir, prefix, con
 
             if columnname == "Certificate Name or OCID":
                 if columnvalue != "":
-                    if 'ocid1.certificate.oc1' not in columnvalue:
+                    if 'ocid1.certificate.oc' not in columnvalue:
                         certificate_tf_name = commonTools.check_tf_variable(columnvalue)+"_cert"
                         tempdict = {'certificate_tf_name': certificate_tf_name}
                     else:
@@ -154,7 +155,7 @@ def create_backendset_backendservers(inputfile, outdir, service_dir, prefix, con
                 if str(columnvalue).lower() == 'true':
                     if str(df.loc[i,'Verify Depth']) == '' or str(df.loc[i,'Verify Depth']) == 'nan':
                         print("\nVerify Depth cannot be left empty when Verify Peer Certificate has a value... Exiting!!!")
-                        exit()
+                        exit(1)
 
             if columnname == 'SSL Protocols':
                 tls_versions_list = ''
@@ -169,14 +170,14 @@ def create_backendset_backendservers(inputfile, outdir, service_dir, prefix, con
 
                 elif columnvalue == '' and str(df.loc[i, 'Cipher Suite Name']) != 'nan':
                     print("\nSSL Protocols are mandatory when custom CipherSuiteName is provided..... Exiting !!")
-                    exit()
+                    exit(1)
 
                 elif columnvalue != '' and str(df.loc[i, 'Cipher Suite Name']) == 'nan':
                     print("\nNOTE: Cipher Suite Name is not specified for Backend Set -> " + str(df.loc[i, 'Backend Set Name']) + ", default value - 'oci-default-ssl-cipher-suite-v1' will be considered.\n")
                 else:
                     pass
 
-            if columnname == "Backend ServerComp&ServerName:Port":
+            if columnname == "Backend ServerComp@ServerName:Port":
                 columnname = "backend_server"
 
             columnname = commonTools.check_column_headers(columnname)
@@ -189,13 +190,28 @@ def create_backendset_backendservers(inputfile, outdir, service_dir, prefix, con
         cnt = 0
 
         #beserver_str = ''
-        columnvalue = str(df.loc[i,'Backend ServerComp&ServerName:Port']).strip().split(',')
+        columnvalue = str(df.loc[i,'Backend ServerComp@ServerName:Port']).strip().split(',')
         for lbr_be_server in columnvalue:
+            lbr_be_server=lbr_be_server.strip()
+
             if (lbr_be_server != "" and lbr_be_server != "nan"):
                 bserver_list = str(df.loc[i, 'Backup <Backend Server Name>']).strip().split(',')
                 cnt = cnt + 1
-                serverinfo = lbr_be_server.strip().split("&")
-                servername = serverinfo[1].split(":")[0].strip()
+
+                inst_compartment_tf_name = commonTools.check_tf_variable(str(df.loc[i, 'Compartment Name']).strip())
+                if len(lbr_be_server.split("@")) == 2:
+                    if(len(lbr_be_server.split("@")[0].strip())!=0):
+                        inst_compartment_tf_name = commonTools.check_tf_variable(lbr_be_server.split("@")[0].strip())
+                    serverinfo = lbr_be_server.split("@")[1]
+                else:
+                    serverinfo=lbr_be_server
+                if (":" not in serverinfo):
+                    print("Invalid Backend ServerComp@ServerName:Port format specified for row " + str(i + 3) + ". Exiting!!!")
+                    exit(1)
+                else:
+                    servername = serverinfo.split(":")[0].strip()
+                    serverport = serverinfo.split(":")[1].strip()
+
                 if servername in bserver_list:
                     backup = "true"
                 else:
@@ -204,17 +220,13 @@ def create_backendset_backendservers(inputfile, outdir, service_dir, prefix, con
                 tempback = {'backup': backup }
                 tempStr.update(tempback)
 
-                backend_server_tf_name = commonTools.check_tf_variable(servername+"-"+str(cnt))
-                serverport = serverinfo[1].split(":")[1].strip()
-                inst_compartment_tf_name = ''
+                backend_server_tf_name = commonTools.check_tf_variable(servername+"-"+serverport)
                 e = servername.count(".")
                 if (e == 3):
                     backend_server_ip_address = "IP:"+servername
                 else:
                     backend_server_ip_address = "NAME:" + servername
 
-                if serverinfo[0].strip() != "":
-                    inst_compartment_tf_name = commonTools.check_tf_variable(serverinfo[0].strip())
                 tempback = {'backend_server_tf_name': backend_set_tf_name+"_"+backend_server_tf_name,'serverport':serverport,'backend_server_ip_address':backend_server_ip_address, 'instance_tf_compartment': inst_compartment_tf_name }
                 tempStr.update(tempback)
 
@@ -238,9 +250,7 @@ def create_backendset_backendservers(inputfile, outdir, service_dir, prefix, con
 
         if finalstring != "":
 
-            resource = sheetName.lower()
             srcdir = outdir + "/" + reg + "/" + service_dir + "/"
-            commonTools.backup_file(srcdir, resource, lb_auto_tfvars_filename)
 
             # Write to TF file
             outfile = srcdir + lb_auto_tfvars_filename

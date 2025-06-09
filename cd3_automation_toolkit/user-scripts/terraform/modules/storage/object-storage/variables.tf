@@ -1,5 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 #################################
 ## Variables Block - Object Storage
 ## Create Object Storage
@@ -45,10 +46,10 @@ variable "defined_tags" {
   }
 }
 
-#variable "kms_key_id" {
-#description = "The OCID of a master encryption key used to call the Key Management service to generate a data encryption key or to encrypt or decrypt a data #encryption key."
-#type        = string
-#}
+variable "kms_key_id" {
+description = "The OCID of a master encryption key used to call the Key Management service to generate a data encryption key or to encrypt or decrypt a data #encryption key."
+type        = string
+}
 
 #variable "metadata" {
 #description = "Arbitrary string, up to 4KB, of keys and values for user-defined metadata."

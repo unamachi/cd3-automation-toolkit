@@ -1,5 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 #################################
 ## Variables Block - Autonomous database
 ## Create autonomous database
@@ -12,6 +13,12 @@ variable "admin_password" {
 
 variable "character_set" {
   type = string
+}
+
+variable "customer_contacts" {
+  description = "The customer_contacts of ADB"
+  type        = list(string)
+
 }
 
 variable "compartment_id" {

@@ -20,7 +20,7 @@ from jinja2 import Environment, FileSystemLoader
 ######
 
 # Execution of the code begins here
-def create_ruleset(inputfile, outdir, service_dir, prefix, config=DEFAULT_LOCATION):
+def create_ruleset(inputfile, outdir, service_dir, prefix, ct):
     # Load the template file
     file_loader = FileSystemLoader(f'{Path(__file__).parent}/templates')
     env = Environment(loader=file_loader, keep_trailing_newline=True)
@@ -32,13 +32,9 @@ def create_ruleset(inputfile, outdir, service_dir, prefix, config=DEFAULT_LOCATI
     uri = env.get_template('uri-redirect-rules-template')
 
     filename = inputfile
-    configFileName = config
     sheetName = "LB-RuleSet"
     lb_auto_tfvars_filename = prefix + "_"+sheetName.lower()+".auto.tfvars"
     rs_str = {}
-
-    ct = commonTools()
-    ct.get_subscribedregions(configFileName)
 
     # Read cd3 using pandas dataframe
     df, col_headers = commonTools.read_cd3(filename, sheetName)
@@ -69,6 +65,9 @@ def create_ruleset(inputfile, outdir, service_dir, prefix, config=DEFAULT_LOCATI
     # Take backup of files
     for reg in ct.all_regions:
         rs_str[reg] = ''
+        resource = sheetName.lower()
+        srcdir = outdir + "/" + reg + "/" + service_dir + "/"
+        commonTools.backup_file(srcdir, resource, lb_auto_tfvars_filename)
 
     # List of the column headers
     dfcolumns = df.columns.values.tolist()
@@ -127,7 +126,7 @@ def create_ruleset(inputfile, outdir, service_dir, prefix, config=DEFAULT_LOCATI
 
         if region not in ct.all_regions:
             print("\nInvalid Region; It should be one of the values mentioned in VCN Info tab...Exiting!!")
-            exit()
+            exit(1)
 
         # temporary dictionaries
         tempStr= {}
@@ -311,9 +310,7 @@ def create_ruleset(inputfile, outdir, service_dir, prefix, config=DEFAULT_LOCATI
             rs_str[reg] = rs.render(skeleton=True, count=0, region=reg).replace(src,rs_str[reg]+"\n"+src)
             finalstring = "".join([s for s in rs_str[reg].strip().splitlines(True) if s.strip("\r\n").strip()])
 
-            resource=sheetName.lower()
             srcdir = outdir + "/" + reg + "/" + service_dir + "/"
-            commonTools.backup_file(srcdir, resource, lb_auto_tfvars_filename)
 
             outfile = srcdir + lb_auto_tfvars_filename
 

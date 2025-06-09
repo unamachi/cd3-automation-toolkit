@@ -18,18 +18,14 @@ from commonTools import *
 ######
 
 # Execution of the code begins here
-def create_terraform_oss(inputfile, outdir, service_dir, prefix,config):
+def create_terraform_oss(inputfile, outdir, service_dir, prefix, ct):
 
     # Declare variables
     filename = inputfile
-    configFileName = config
     prefix = prefix
     outdir = outdir
 
     #Get subscribed regions and home region
-
-    ct = commonTools()
-    ct.get_subscribedregions(configFileName)
 
     # Load the template file
     file_loader = FileSystemLoader(f'{Path(__file__).parent}/templates')
@@ -58,6 +54,9 @@ def create_terraform_oss(inputfile, outdir, service_dir, prefix,config):
     # Initialise empty TF string for each region to take backup of files
     for eachregion in ct.all_regions:
         tfStr[eachregion] = ''
+        srcdir = outdir + "/" + eachregion + "/" + service_dir
+        resource = sheetName.lower()
+        commonTools.backup_file(srcdir + "/", resource, auto_tfvars_filename)
 
     #Declaration
     bucket_lifecycle_policy = {}
@@ -180,7 +179,7 @@ def create_terraform_oss(inputfile, outdir, service_dir, prefix,config):
 
         if str(df.loc[i, 'Region']).lower() == 'nan' or str(df.loc[i, 'Compartment Name']).lower() == 'nan' or str(df.loc[i, 'Bucket Name']).lower() == 'nan':
             print("\nThe values for Region, Compartment Name and Bucket Name cannot be left empty. Please enter a value and try again !!")
-            exit()
+            exit(1)
 
         for columnname in dfcolumns:
             # Column value
@@ -280,7 +279,7 @@ def create_terraform_oss(inputfile, outdir, service_dir, prefix,config):
                             time_rule_locked = rule_components[3]
                             if time_rule_locked.endswith(".000Z"):
                                 time_rule_locked = time_rule_locked[:-5] + "Z"
-                            elif not re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z",time_rule_locked):
+                            elif not re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.*Z",time_rule_locked):
                                 # Convert from "dd-mm-yyyy" to "YYYY-MM-DDThh:mm:ssZ" format
                                 if re.match(r"\d{2}-\d{2}-\d{4}", time_rule_locked):
                                     try:
@@ -290,10 +289,12 @@ def create_terraform_oss(inputfile, outdir, service_dir, prefix,config):
                                         print(
                                             f"'{time_rule_locked}' is not in the correct format. It should be in the format 'dd-mm-yyyy'. The retention rules will not be processed.")
                                         continue
+                                '''
                                 else:
                                     print(
                                         f"'{time_rule_locked}' is not in the correct format. It should be in the format of 'YYYY-MM-DDThh:mm:ssZ' or 'YYYY-MM-DDThh:mm:ss.fffZ'. The retention rules will not be processed.")
                                     continue
+                                '''
 
                         tempdict = {'retention_rule_display_name': retention_rule_display_name,
                                     'time_unit': time_unit,
@@ -344,6 +345,8 @@ def create_terraform_oss(inputfile, outdir, service_dir, prefix,config):
             src = "##Add New OSS Buckets for " + reg.lower() + " here##"
             tfStr[reg] = oss_template.render(count = 0, region = reg).replace(src, tfStr[reg] + "\n" + src)
             tfStr[reg] = "".join([s for s in tfStr[reg].strip().splitlines(True) if s.strip("\r\n").strip()])
+
+
             oname[reg]=open(outfile[reg],'w')
             oname[reg].write(tfStr[reg])
             oname[reg].close()

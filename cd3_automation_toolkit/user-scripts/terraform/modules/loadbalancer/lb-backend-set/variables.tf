@@ -1,5 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 ############################
 # Variable Block - Load Balancer
 # Create Load Balancer Backend Set
@@ -15,6 +16,11 @@ variable "interval_ms" {
   type        = number
   description = "The interval between health checks, in milliseconds"
   default     = 10000 # Default as per hashicorp terraform
+}
+
+variable "is_force_plain_text" {
+  type        = string
+  description = "Specifies if health checks should always be done using plain text instead of depending on whether or not the associated backend set is using SSL."
 }
 
 variable "port" {

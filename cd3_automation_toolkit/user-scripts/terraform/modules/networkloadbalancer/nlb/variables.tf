@@ -1,5 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 #########################################
 # Variable Block - Network Load Balancer
 # Create Network Load Balancer
@@ -37,6 +38,11 @@ variable "is_private" {
   default = true
 }
 
+variable "is_symmetric_hash_enabled" {
+  type    = bool
+
+}
+
 variable "network_security_group_ids" {
   type        = list(any)
   description = "NSGs to place the load balancer in"
@@ -47,6 +53,13 @@ variable "nlb_ip_version" {
   type    = string
   default = null
 }
+
+
+variable "assigned_private_ipv4" {
+  type    = string
+  default = null
+}
+
 
 variable "reserved_ips_id" {
   type    = list(any)

@@ -1,5 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 ############################
 # Resource Block - ManagementServices
 # Create Alarms
@@ -17,6 +18,7 @@ resource "oci_monitoring_alarm" "alarm" {
   query                 = var.query
   severity              = var.severity
   body                  = var.body
+
   message_format        = var.message_format
   #metric_compartment_id_in_subtree = var.alarm_metric_compartment_id_in_subtree
   pending_duration             = var.trigger_delay_minutes

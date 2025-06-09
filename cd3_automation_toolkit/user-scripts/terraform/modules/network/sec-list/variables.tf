@@ -1,5 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 ############################
 # Variable Block - Network
 # Create Security List
@@ -184,5 +185,15 @@ variable "ingress_security_rules_udp_options_source_port_range_max" {
 
 variable "ingress_security_rules_udp_options_source_port_range_min" {
   type    = number
+  default = null
+}
+
+variable "default_seclist" {
+  type    = bool
+  default = false
+}
+
+variable "manage_default_resource_id" {
+  type    = string
   default = null
 }

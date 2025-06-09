@@ -1,5 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 ############################
 # Resource Block - Network
 # Create Subnets
@@ -23,6 +24,6 @@ resource "oci_core_subnet" "subnet" {
   prohibit_internet_ingress  = var.prohibit_internet_ingress
   prohibit_public_ip_on_vnic = var.prohibit_public_ip_on_vnic
   route_table_id             = var.route_table_id
-  security_list_ids          = var.security_list_ids != [] ? [for sl in var.security_list_ids : (length(regexall("ocid1.securitylist.oc1*", sl)) > 0 ? sl : (sl == "" ? var.vcn_default_security_list_id : var.custom_security_list_id[sl]["seclist_tf_id"]))] : []
+  security_list_ids          = var.security_list_ids != [] ? [for sl in var.security_list_ids : (length(regexall("ocid1.securitylist.oc*", sl)) > 0 ? sl : (sl == "" ? var.vcn_default_security_list_id : var.custom_security_list_id[sl]["seclist_tf_id"]))] : []
 
 }

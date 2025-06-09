@@ -51,6 +51,7 @@ def merge_or_generate_route_rule(reg, tempStr, modifiedroutetableStr,routetableS
         end_rule = "## End Route Rule " + tempStr['region'].lower() + "_" + tempStr['rt_tf_name'] + "_" + tempStr[
             'network_entity_id'] + "_" + tempStr['destination']
         if start_rule in modifiedroutetableStr[reg]:  # If the rule is present in filedata
+
             if start_rule not in routetableStr[reg]:  # But the rule is not in routetableStr then add it to filedata
                 if routerule.render(tempStr).strip() != '':
                     if reg != 'lpg_route_rules':
@@ -83,13 +84,10 @@ def merge_or_generate_route_rule(reg, tempStr, modifiedroutetableStr,routetableS
     return data
 
 # Execution of the code begins here for drg routes
-def create_terraform_drg_route(inputfile, outdir, service_dir, prefix, non_gf_tenancy, config,network_connectivity_in_setupoci, modify_network):
+def create_terraform_drg_route(inputfile, outdir, service_dir, prefix, ct, non_gf_tenancy,network_connectivity_in_setupoci, modify_network):
     filename = inputfile
-    configFileName = config
     drgv2 = parseDRGs(filename)
     common_rt = []
-    ct = commonTools()
-    ct.get_subscribedregions(configFileName)
 
     drg_routetablefiles = {}
     drg_routedistributionfiles = {}
@@ -187,7 +185,7 @@ def create_terraform_drg_route(inputfile, outdir, service_dir, prefix, non_gf_te
             drg_rt_dstrb_tf_name = ''
             drg_rt_dstrb_res_name = ''
             region = str(df.loc[i, 'Region']).strip()
-
+            vcn_connectivity_in_excel = ""
             if str(df.loc[i, 'Attached To']).lower().startswith("rpc"):
                 vcn_connectivity_in_excel = "connectivity"
             elif str(df.loc[i, 'Attached To']).lower().startswith("vcn"):
@@ -219,6 +217,9 @@ def create_terraform_drg_route(inputfile, outdir, service_dir, prefix, non_gf_te
 
             # Dont create any route table or route distribution name if using Auto Generated ones
             if (DRG_RT in commonTools.drg_auto_RTs and DRG_RD in commonTools.drg_auto_RDs):
+                continue
+            # Dont create any oute table or route distribution name if OCID is goven in DRG RT Name
+            if ("ocid1.drgroutetable.oc" in DRG_RT):
                 continue
 
             region = region.strip().lower()
@@ -384,13 +385,10 @@ def purge(dir, pattern):
 
 
 # Execution of the code begins here for route creation
-def create_terraform_route(inputfile, outdir, service_dir, prefix, non_gf_tenancy, config, network_vlan_in_setupoci,modify_network):
+def create_terraform_route(inputfile, outdir, service_dir, prefix, ct, non_gf_tenancy, network_vlan_in_setupoci,modify_network):
     filename = inputfile
-    configFileName = config
 
-    ct = commonTools()
     tempSkeleton = {}
-    ct.get_subscribedregions(configFileName)
     common_rt = []
     routetablefiles = {}
     tempStr = {}
@@ -463,7 +461,7 @@ def create_terraform_route(inputfile, outdir, service_dir, prefix, non_gf_tenanc
                 srcStr = "##Add New Route Tables for "+reg.lower()+" here##"
                 modifiedroutetableStr[reg] = tempSkeleton[reg].replace(srcStr,modifiedroutetableStr[reg]) #+"\n"+srcStr) ----> ToTest, if fails add +"\n"+srcStr
             else:
-                modifiedroutetableStr[reg] = ''
+                 modifiedroutetableStr[reg] = ''
      # Get Hub VCN name and create route rules for LPGs as per Section VCN_PEERING
     def createLPGRouteRules(peering_dict):
         ruleStr = ''
@@ -516,30 +514,79 @@ def create_terraform_route(inputfile, outdir, service_dir, prefix, non_gf_tenanc
                         ruleStr =  routerule.render(tempStr,lpg_route_rules=True, region='lpg_route_rules')
                     vcns.vcn_lpg_rules[right_vcn,r] = vcns.vcn_lpg_rules[right_vcn,r] + ruleStr
 
+    def createVCNRtTableString(items):
+        # Create IGW/NGW/SGW Route Table
+        for key, value in items:
+            vn = key[0]
+            rn = key[1]
+            rt_name = value[1]
+            if rt_name != '':
+                Str = ''
+                srcStr = "##Add New Route Tables for " + rn + " here##"
+                if srcStr not in routetableStr[rn]:
+                    routetableStr[rn] = routetableStr[rn] + srcStr
+                tempStr['region'] = rn
+
+                rt_var = vn + "_" + rt_name
+                rt_display = rt_name
+                rt_tf_name = commonTools.check_tf_variable(rt_var)
+                #outfile = outdir + "/" + rn + "/" + service_dir + "/" + prefix + auto_tfvars_filename
+                region_rt_name = "#" + rn + "_" + rt_tf_name + "#"
+
+                if (region_rt_name not in common_rt):
+                    common_rt.append(region_rt_name)
+                    tempStr['rt_tf_name'] = rt_tf_name
+                    tempStr['compartment_tf_name'] = compartment_var_name
+                    tempStr['display_name'] = rt_display
+                    #tempStr['gateway_route_table'] = 'true'
+                    tempStr['vcn_tf_name'] = commonTools.check_tf_variable(vn)
+
+
+                    if region_rt_name not in modifiedroutetableStr[rn]:
+                        Str = template.render(tempStr,
+                                              route_rules_igw="####ADD_NEW_IGW_RULES " + region_rt_name + " ####",
+                                              route_rules_ngw="####ADD_NEW_NGW_RULES " + region_rt_name + " ####",
+                                              route_rules_sgw="####ADD_NEW_SGW_RULES " + region_rt_name + " ####",
+                                              route_rules_drg="####ADD_NEW_DRG_RULES " + region_rt_name + " ####",
+                                              route_rules_lpg="####ADD_NEW_LPG_RULES " + region_rt_name + " ####",
+                                              route_rules_ip="####ADD_NEW_IP_RULES " + region_rt_name + " ####", )
+
+                        modified_network_new_rt.append(region_rt_name)
+                        if Str != "" and Str != None:
+                            routetableStr[rn] = routetableStr[rn].replace(srcStr, Str)
+
+                ## Add parameter for igw/ngw/sgw route tables
+                ss = "### gateway_route_table for " + region_rt_name + " ##"
+                rr = "gateway_route_table = true"
+                routetableStr[rn] = routetableStr[rn].replace(ss, rr)
+
+
     def createVCNDRGRtTableString(compartment_var_name, vcn_with_drg, peering_dict, region, tempStr, hub):
         drgStr = ''
         temprule = ''
-        if (vcns.vcn_drgs[vcn_with_drg,region] == 'y'):
+        if (vcns.vcn_drgs[vcn_with_drg,region][0] == 'y'):
             drg_name = region + "_drg"
-        elif (vcns.vcn_drgs[vcn_with_drg,region] != 'n'):
-            drg_name = vcns.vcn_drgs[vcn_with_drg,region]
-        elif (vcns.vcn_drgs[vcn_with_drg,region] == 'n' and hub == 1):
+        elif (vcns.vcn_drgs[vcn_with_drg,region][0] != 'n'):
+            drg_name = vcns.vcn_drgs[vcn_with_drg,region][0]
+        elif (vcns.vcn_drgs[vcn_with_drg,region][0] == 'n' and hub == 1):
             print("\ndrg_required column for VCN " + vcn_name + " marked as Hub should not be set to n!!\n")
             return
 
-        drg_rt_name = ""
+        drg_rt_name = vcns.vcn_drgs[vcn_with_drg,region][1]
+        '''
         if (os.path.exists(outdir + "/" + region + "/" + service_dir + "/obj_names.safe")):
             with open(outdir + "/" + region + "/" + service_dir + "/obj_names.safe") as f:
                 for line in f:
                     if ("drginfo::::" + vcn_with_drg + "::::" + drg_name in line):
                         drg_rt_name = line.split("::::")[3].strip()
+        '''
 
+        # Dont Attach any Route Table with DRG if it is ''
         if (drg_rt_name == ""):
-            rt_display = "Route Table associated with DRG-" + drg_name
-            rt_var = vcn_with_drg + "_" + rt_display
-        # Route table associated with DRG inside VCN is not existing
-        elif (drg_rt_name == "None"):
             return
+            #rt_display = "Route Table associated with DRG-" + drg_name
+            #rt_var = vcn_with_drg + "_" + rt_display
+        # Route table associated with DRG inside VCN is not existing
         else:
             rt_var = vcn_with_drg + "_" + drg_rt_name
             rt_display = drg_rt_name
@@ -674,11 +721,11 @@ def create_terraform_route(inputfile, outdir, service_dir, prefix, non_gf_tenanc
 
                 srcStr = "####ADD_NEW_DRG_RULES " + region_rt_name + " ####"
                 drg_name = ""
-                if (vcns.vcn_drgs[hub_vcn_name,region] == 'y'):
+                if (vcns.vcn_drgs[hub_vcn_name,region][0] == 'y'):
                     # drg_name = hub_vcn_name + "_drg"
                     drg_name = region + "_drg"
-                elif (vcns.vcn_drgs[hub_vcn_name,region] != 'n'):
-                    drg_name = vcns.vcn_drgs[hub_vcn_name,region]
+                elif (vcns.vcn_drgs[hub_vcn_name,region][0] != 'n'):
+                    drg_name = vcns.vcn_drgs[hub_vcn_name,region][0]
 
                 if (drg_name != ""):
 
@@ -866,7 +913,7 @@ def create_terraform_route(inputfile, outdir, service_dir, prefix, non_gf_tenanc
         region_rt_name = "#"+region + "_" + tempStr['rt_tf_name']+"#"
 
         # Get VCN component names
-        vcn_drg = vcns.vcn_drgs[vcn_name,region]
+        vcn_drg = vcns.vcn_drgs[vcn_name,region][0]
         drg_name = ""
         if (vcn_drg == "y"):
             # drg_name = vcn_name + "_drg"
@@ -875,7 +922,7 @@ def create_terraform_route(inputfile, outdir, service_dir, prefix, non_gf_tenanc
             drg_name = vcn_drg
         tempStr['drg_name'] = drg_name
 
-        vcn_igw = vcns.vcn_igws[vcn_name,region]
+        vcn_igw = vcns.vcn_igws[vcn_name,region][0]
         igw_name = ""
         if (vcn_igw == "y"):
             igw_name = vcn_name + "_igw"
@@ -883,7 +930,7 @@ def create_terraform_route(inputfile, outdir, service_dir, prefix, non_gf_tenanc
             igw_name = vcn_igw
         tempStr['igw_name'] = igw_name
 
-        vcn_ngw = vcns.vcn_ngws[vcn_name,region]
+        vcn_ngw = vcns.vcn_ngws[vcn_name,region][0]
         ngw_name = ""
         if (vcn_ngw == "y"):
             ngw_name = vcn_name + "_ngw"
@@ -891,7 +938,7 @@ def create_terraform_route(inputfile, outdir, service_dir, prefix, non_gf_tenanc
             ngw_name = vcn_ngw
         tempStr['ngw_name'] = ngw_name
 
-        vcn_sgw = vcns.vcn_sgws[vcn_name,region]
+        vcn_sgw = vcns.vcn_sgws[vcn_name,region][0]
         sgw_name = ""
         if (vcn_sgw == "y"):
             sgw_name = vcn_name + "_sgw"
@@ -947,6 +994,7 @@ def create_terraform_route(inputfile, outdir, service_dir, prefix, non_gf_tenanc
             if data_ngw !=  '':
                 data_ngw = data_ngw + "\n" + ngwStr
                 routetableStr[region] = routetableStr[region].replace(ngwStr, data_ngw)
+
         # IGW Rules
         if configure_igw.strip() == 'y' and vcn_igw != 'n':
             igwStr = "####ADD_NEW_IGW_RULES " + region_rt_name + " ####"
@@ -1016,7 +1064,7 @@ def create_terraform_route(inputfile, outdir, service_dir, prefix, non_gf_tenanc
             continue
 
         # skip Subnet rows while running option Add/Modify/Delete VLANs
-        if modify_network and network_vlan_in_setupoci == 'vlan' and subnet_vlan_in_excel.startswith('subnet'):
+        if modify_network and network_vlan_in_setupoci == 'vlan' and subnet_vlan_in_excel.lower().startswith('subnet'):
             continue
 
         if (region in commonTools.endNames):
@@ -1044,7 +1092,7 @@ def create_terraform_route(inputfile, outdir, service_dir, prefix, non_gf_tenanc
                 str(df.loc[i, 'Configure IGW Route(y|n)']).lower() == 'nan' or
                 str(df.loc[i, 'Configure OnPrem Route(y|n)']).lower() == 'nan' or
                 str(df.loc[i, 'Configure VCNPeering Route(y|n)']).lower() == 'nan'):
-            print("\nERROR!!! Column Values (except DHCP Option Name, Route Table Name, Seclist Name or DNS Label) or Rows cannot be left empty in Subnets sheet in CD3..Exiting!")
+            print("\nERROR!!! Column Values (except DHCP Option Name, Route Table Name, Seclist Name or DNS Label) or Rows cannot be left empty in SubnetsVLANs sheet in CD3..Exiting!")
             exit(1)
         if (str(df.loc[i,'Subnet or VLAN']).strip().lower()=='subnet'):
             if str(df.loc[i, 'Type(private|public)']).lower() == 'nan' or str(df.loc[i, 'Add Default Seclist']).lower() == 'nan':
@@ -1131,6 +1179,10 @@ def create_terraform_route(inputfile, outdir, service_dir, prefix, non_gf_tenanc
             region_included.append(region)
 
         processSubnet(tempStr)
+
+    createVCNRtTableString(vcns.vcn_igws.items())
+    createVCNRtTableString(vcns.vcn_ngws.items())
+    createVCNRtTableString(vcns.vcn_sgws.items())
 
     # Create Route Table associated with LPGs in Hub VCN peered with spoke VCNs
     for key in vcns.hub_vcn_names:

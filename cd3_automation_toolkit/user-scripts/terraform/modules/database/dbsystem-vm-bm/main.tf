@@ -1,5 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 ############################
 # Resource Block - Database
 # Create Database VM BM
@@ -90,7 +91,7 @@ resource "oci_database_db_system" "database_db_system" {
   freeform_tags = var.freeform_tags
 
   lifecycle {
-    ignore_changes = [db_home[0].database[0].defined_tags["Oracle-Tags.CreatedOn"]]
+    ignore_changes = [db_home[0].database[0].defined_tags["Oracle-Tags.CreatedOn"],db_home[0].database[0].defined_tags["Oracle-Tags.CreatedBy"],db_home[0].database[0].db_backup_config[0].auto_full_backup_day]
   }
 
 }

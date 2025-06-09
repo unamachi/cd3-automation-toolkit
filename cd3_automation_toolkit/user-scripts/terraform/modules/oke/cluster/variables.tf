@@ -1,6 +1,6 @@
-# Copyright 2017, 2019 Oracle Corporation and/or affiliates.
-# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 variable "compartment_id" {
   type        = string
   description = "The OCID of the compartment"
@@ -32,6 +32,12 @@ variable "kubernetes_version" {
   default     = null
 }
 
+variable "type" {
+  type        = string
+  description = "The type of the cluster"
+  default     = null
+}
+
 variable "cni_type" {
   type        = string
   description = "The configuration for pod networking for the cluster"
@@ -53,6 +59,18 @@ variable "endpoint_subnet_id" {
   type        = string
   description = "The subnet for the endpoint"
   default     = null
+}
+
+variable "is_policy_enabled" {
+  type        = bool
+  description = "Whether the image verification policy is enabled"
+  default     = false
+}
+
+variable "policy_kms_key_id" {
+  type    = string
+  description = "The OCIDs of the KMS key that will be used to verify whether the images are signed by an approved source"
+  default = null
 }
 
 variable "is_kubernetes_dashboard_enabled" {
@@ -88,6 +106,11 @@ variable "service_lb_subnet_ids" {
   default     = []
 }
 
+variable "kms_key_id" {
+  type    = string
+  default = null
+}
+
 variable "defined_tags" {
   type = map(any)
   default = { "Oracle-Tags.CreatedOn" = "$${oci.datetime}",
@@ -96,6 +119,26 @@ variable "defined_tags" {
 }
 
 variable "freeform_tags" {
+  type    = map(any)
+  default = {}
+}
+
+variable "volume_defined_tags" {
+  type = map(any)
+  default = {}
+}
+
+variable "volume_freeform_tags" {
+  type    = map(any)
+  default = {}
+}
+
+variable "lb_defined_tags" {
+  type = map(any)
+  default = {}
+}
+
+variable "lb_freeform_tags" {
   type    = map(any)
   default = {}
 }

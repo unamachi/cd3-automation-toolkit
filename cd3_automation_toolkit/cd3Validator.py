@@ -6,53 +6,29 @@
 #
 # Author: Shruthi Subramanian
 # Oracle Consulting
-# Modified (TF Upgrade): Shruthi Subramanian
+# Modified (TF Upgrade): CD3 Developers at Oracle
 #
 
 import logging
 import ipaddress
+import os
 from functools import partial
+import inspect
 from oci.core.virtual_network_client import VirtualNetworkClient
 from commonTools import *
 
-
+'''
 def get_vcn_ids(compartment_ids, config):
     # Fetch the VCN ID
     for region in ct.all_regions:
         config.__setitem__("region", ct.region_dict[region])
-        vnc = VirtualNetworkClient(config)
+        vnc = VirtualNetworkClient(config=config, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY,signer=signer)
         for comp_id in compartment_ids.values():
             vcn_list = oci.pagination.list_call_get_all_results(vnc.list_vcns, compartment_id=comp_id)
             for vcn in vcn_list.data:
                 # if(vcn.lifecycle_state == 'ACTIVE'):
                 vcn_ids[vcn.display_name] = vcn.id
     return vcn_ids
-
-# Check for unique values across two sheets
-def compare_values(list_to_check,value_to_check,index):
-    if (value_to_check not in list_to_check):
-        if 'Availability Domain(AD1|AD2|AD3)' in index[1]:
-            log(f'ROW {index[0] + 3} : Invalid value for column "{index[1]}".')
-        else:
-            log(f'ROW {index[0] + 3} : Invalid value for column "{index[1]}". {value_to_check} does not exist in {index[2]} tab.')
-        return True
-    return False
-
-# Checks for special characters in dns_label name
-def checklabel(lable, count):
-    present = False
-    lable = str(lable).strip()
-    if (lable == "Nan") or (lable == "") or (lable == "NaN") or (lable == "nan"):
-        pass
-    else:
-        regex = re.compile('[@_!#$%^&* ()<>?/\|}{~:]')
-        if (regex.search(lable) == None):
-            pass
-        else:
-            log(f'ROW {count+2} : "DNS Label" value has special characters.')
-            present = True
-    return present
-
 
 # Shows LPG Peering that will be established based on hub_spoke_peer_none column
 def showPeering(vcnsob):
@@ -83,6 +59,33 @@ def showPeering(vcnsob):
 
     return present
 
+'''
+
+# Check for unique values across two sheets
+def compare_values(list_to_check,value_to_check,index):
+    if (value_to_check not in list_to_check):
+        if 'Availability Domain(AD1|AD2|AD3)' in index[1]:
+            log(f'ROW {index[0] + 3} : Invalid value for column "{index[1]}".')
+        else:
+            log(f'ROW {index[0] + 3} : Invalid value for column "{index[1]}". {value_to_check} does not exist in {index[2]} tab.')
+        return True
+    return False
+
+# Checks for special characters in dns_label name
+def checklabel(lable, count):
+    present = False
+    lable = str(lable).strip()
+    if (lable == "Nan") or (lable == "") or (lable == "NaN") or (lable == "nan"):
+        pass
+    else:
+        regex = re.compile('[@_!#$%^&* ()<>?/\|}{~:]')
+        if (regex.search(lable) == None):
+            pass
+        else:
+            log(f'ROW {count+2} : "DNS Label" value has special characters.')
+            present = True
+    return present
+
 
 # Checks for duplicates
 def checkIfDuplicates(listOfElems):
@@ -103,10 +106,10 @@ def validate_cidr(cidr_list):
 
     for i in range(0, len(cidr_list)):
         try:
+            rowN = cidr_list[i][1]
             ipaddress.ip_network(cidr_list[i][0])
-            rowN= cidr_list[i][1]
         except ValueError:
-            log(f'Row  {str(rowN)} Field "CIDR Block" {cidr_list[i]} is invalid. CIDR range has host bits set.')
+            log(f'Row {str(rowN)} Field "CIDR Block" {cidr_list[i]} is invalid. CIDR range has host bits set.')
             cidr_check = True
 
     for i in range(0, len(cidr_list)):
@@ -217,6 +220,7 @@ def validate_subnets(filename, comp_ids, vcnobj):
 
     # Loop through each row
     for i in dfsub.index:
+        subnet_or_vlan = (str(dfsub.loc[i, 'Subnet or VLAN']).strip()).split("::")[0]
         count = count + 1
         # Check for <END> in the inputs; if found the validation ends there and return the status of flag
         if (str(dfsub.loc[i, 'Region']).strip() in commonTools.endNames):
@@ -226,7 +230,7 @@ def validate_subnets(filename, comp_ids, vcnobj):
         region = str(dfsub.loc[i, 'Region']).strip()
 
         if (region.lower() != "nan" and region.lower() not in ct.all_regions):
-            log(f'ROW {i+3} : Region {region} is not subscribed to tenancy.')
+            log(f'ROW {i+3} : Either "Region" {region} is not subscribed to tenancy or toolkit is not yet configured to be used for this region.')
             subnet_reg_check = True
 
         # Check for invalid compartment name
@@ -235,6 +239,7 @@ def validate_subnets(filename, comp_ids, vcnobj):
             pass
         else:
             try:
+                comp_name = commonTools.check_tf_variable(comp_name)
                 comp_id = comp_ids[comp_name]
             except KeyError:
                 log(f'ROW {i+3} : Compartment {comp_name} does not exist in OCI.')
@@ -249,30 +254,31 @@ def validate_subnets(filename, comp_ids, vcnobj):
 
         # Check if the dns_label field has special characters or if it has greater than 15 characters or is duplicate
         dns_value = str(dfsub.loc[i, 'DNS Label']).strip()
-        dns_subnetname = str(dfsub.loc[i, 'Display Name']).strip()
-        dns_vcn = str(dfsub.loc[i, 'VCN Name']).strip()
+        if dns_value.lower() != 'n':
+            dns_subnetname = str(dfsub.loc[i, 'Display Name']).strip()
+            dns_vcn = str(dfsub.loc[i, 'VCN Name']).strip()
 
-        if (dns_value.lower() == "nan"):
-            subnet_dns.append("")
-        else:
-            if (dns_vcn not in vcn_list):
-                vcn_list.append(dns_vcn)
-                if (dns_subnetname not in subnetname_list):
-                    subnetname_list.append(dns_subnetname)
+            if (dns_value.lower() == "nan"):
+                subnet_dns.append("")
+            else:
+                if (dns_vcn not in vcn_list):
+                    vcn_list.append(dns_vcn)
+                    if (dns_subnetname not in subnetname_list):
+                        subnetname_list.append(dns_subnetname)
+                        if (dns_value not in subnet_dns):
+                            subnet_dns.append(dns_value)
+                else:
                     if (dns_value not in subnet_dns):
                         subnet_dns.append(dns_value)
-            else:
-                if (dns_value not in subnet_dns):
-                    subnet_dns.append(dns_value)
-                else:
-                    log(f'ROW {i+3} : Duplicate "DNS Label" value "{dns_value}" for subnet "{dns_subnetname}" of vcn "{dns_vcn}".')
-                    subnet_dns.append(dns_value)
-                    subnet_dnsdup_check = True
-            subnet_dnswrong_check = checklabel(dns_value, count)
+                    else:
+                        log(f'ROW {i+3} : Duplicate "DNS Label" value "{dns_value}" for subnet "{dns_subnetname}" of vcn "{dns_vcn}".')
+                        subnet_dns.append(dns_value)
+                        #subnet_dnsdup_check = True
+                subnet_dnswrong_check = checklabel(dns_value, count)
 
-        if (len(dns_value) > 15):
-            log(f'ROW {i+3} : "DNS Label" value "{dns_value}" for subnet "{dns_subnetname}" of vcn "{dns_vcn}" has more alphanumeric characters than the allowed maximum limit of 15.')
-            subnet_dns_length = True
+            if (len(dns_value) > 15):
+                log(f'ROW {i+3} : "DNS Label" value "{dns_value}" for subnet "{dns_subnetname}" of vcn "{dns_vcn}" has more alphanumeric characters than the allowed maximum limit of 15.')
+                subnet_dns_length = True
 
         # Check if the Service and Internet gateways are set appropriately; if not display the message;
         sgw_value = str(dfsub.loc[i, 'Configure SGW Route(n|object_storage|all_services)']).strip()
@@ -306,13 +312,15 @@ def validate_subnets(filename, comp_ids, vcnobj):
             cidr_list.append(entry)
 
         # Check for null values and display appropriate message
-        labels = ['DNS Label', 'DHCP Option Name', 'Route Table Name', 'Seclist Names']
+        labels = ['DNS Label', 'DHCP Option Name', 'Route Table Name', 'Seclist Names','NSGs']
         for j in dfsub.keys():
             if (str(dfsub[j][i]).strip() == "NaN" or str(dfsub[j][i]).strip() == "nan" or str(dfsub[j][i]).strip() == ""):
                 # only dhcp_option_name, route table name, seclist_names and dns_label columns can be empty
                 if j in labels or commonTools.check_column_headers(j) in commonTools.tagColumns:
                     pass
                 else:
+                    if j == "Type(private|public)" and subnet_or_vlan.lower() == "vlan":
+                        continue
                     log(f'ROW {count+2} : Empty value at column "{j}".')
                     subnet_empty_check = True
 
@@ -366,8 +374,8 @@ def validate_subnets(filename, comp_ids, vcnobj):
 
 
 # Check if VCNs tab is compliant
-def validate_vcns(filename, comp_ids, vcnobj, config):  # ,vcn_cidrs,vcn_compartment_ids):
-    vcn_ids = get_vcn_ids(comp_ids, config)
+def validate_vcns(filename, comp_ids, vcnobj):# config):  # ,vcn_cidrs,vcn_compartment_ids):
+    #vcn_ids = get_vcn_ids(comp_ids, config)
 
     dfv = data_frame(filename, 'VCNs')
 
@@ -381,6 +389,7 @@ def validate_vcns(filename, comp_ids, vcnobj, config):  # ,vcn_cidrs,vcn_compart
     vcn_reg_check = False
     vcn_vcnname_check = False
     vcn_dns_length =  False
+    vcn_peer_check = False
 
     vcn_check = False
 
@@ -399,7 +408,7 @@ def validate_vcns(filename, comp_ids, vcnobj, config):  # ,vcn_cidrs,vcn_compart
         # Check for invalid Region
         region = str(dfv.loc[i, 'Region']).strip()
         if (region.lower() != "nan" and region.lower() not in ct.all_regions):
-            log(f'ROW {i+3} : Region {region} is not subscribed to tenancy.')
+            log(f'ROW {i+3} : Either "Region" {region} is not subscribed to tenancy or toolkit is not yet configured to be used for this region.')
             vcn_reg_check = True
 
         # Check for invalid Compartment Name
@@ -408,6 +417,7 @@ def validate_vcns(filename, comp_ids, vcnobj, config):  # ,vcn_cidrs,vcn_compart
             pass
         else:
             try:
+                comp_name = commonTools.check_tf_variable(comp_name)
                 comp_id = comp_ids[comp_name]
             except KeyError:
                 log(f'ROW {i+3} : Compartment {comp_name} does not exist in OCI.')
@@ -453,7 +463,7 @@ def validate_vcns(filename, comp_ids, vcnobj, config):  # ,vcn_cidrs,vcn_compart
                 if j == 'DNS Label' or commonTools.check_column_headers(j) in commonTools.tagColumns:
                     continue
                 else:
-                    log(f'ROW {count+2} : Empty value at column {j}')
+                    log(f'ROW {count+2} : Empty value at column "{j}".')
                     vcn_empty_check = True
 
     if any([vcn_vcnname_check, vcn_reg_check, vcn_comp_check, vcn_empty_check, vcn_dnswrong_check, vcn_dns_length]):  # or vcn_dnsdup_check == True):
@@ -467,6 +477,7 @@ def validate_vcns(filename, comp_ids, vcnobj, config):  # ,vcn_cidrs,vcn_compart
         print("VCN CIDRs Check failed!!")
     log("End VCN CIDRs Check--------------------------------------\n")
 
+    '''
     log("Start LPG Peering Check---------------------------------------------")
     log("Current Status of LPGs in OCI for each VCN listed in VCNs tab:")
     oci_vcn_lpgs = {}
@@ -501,7 +512,7 @@ def validate_vcns(filename, comp_ids, vcnobj, config):  # ,vcn_cidrs,vcn_compart
         vcn_lpg_str = ""
 
         config.__setitem__("region", ct.region_dict[region])
-        vnc = oci.core.VirtualNetworkClient(config)
+        vnc = oci.core.VirtualNetworkClient(config=config, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY,signer=signer)
 
         lpg_list = vnc.list_local_peering_gateways(compartment_id=comp_id, vcn_id=vcn_id)
 
@@ -522,6 +533,7 @@ def validate_vcns(filename, comp_ids, vcnobj, config):  # ,vcn_cidrs,vcn_compart
     log("Link: https://confluence.oraclecorp.com/confluence/display/NAC/Support+for+Non-GreenField+Tenancies")
 
     log("End LPG Peering Check---------------------------------------------\n")
+    '''
 
     return vcn_check, vcn_cidr_check, vcn_peer_check
 
@@ -551,7 +563,7 @@ def validate_dhcp(filename, comp_ids, vcnobj):
         region = str(dfdhcp.loc[i, 'Region']).strip()
 
         if (region.lower() != "nan" and region.lower() not in ct.all_regions):
-            log(f'ROW {i+3} : Region {region} is not subscribed to tenancy.')
+            log(f'ROW {i+3} : Either "Region" {region} is not subscribed to tenancy or toolkit is not yet configured to be used for this region.')
             dhcp_reg_check = True
 
         # Check for invalid compartment name
@@ -560,6 +572,7 @@ def validate_dhcp(filename, comp_ids, vcnobj):
             pass
         else:
             try:
+                comp_name = commonTools.check_tf_variable(comp_name)
                 comp_id = comp_ids[comp_name]
             except KeyError:
                 log(f'ROW {i+3} : Compartment {comp_name} does not exist in OCI.')
@@ -619,7 +632,7 @@ def validate_drgv2(filename, comp_ids, vcnobj):
             log(f'ROW {i + 3} : Empty value at column "Region".')
             drgv2_empty_check = True
         elif region not in ct.all_regions:
-            log(f'ROW {i + 3} : Region {region} is not subscribed to tenancy.')
+            log(f'ROW {i + 3} : Either "Region" {region} is not subscribed to tenancy or toolkit is not yet configured to be used for this region.')
             drgv2_invalid_check = True
 
         # Check for invalid Compartment Name
@@ -629,6 +642,7 @@ def validate_drgv2(filename, comp_ids, vcnobj):
             drgv2_empty_check = True
         else:
             try:
+                comp_name = commonTools.check_tf_variable(comp_name)
                 comp_id = comp_ids[comp_name]
             except KeyError:
                 log(f'ROW {i+3} : Compartment {comp_name} does not exist in OCI.')
@@ -639,7 +653,7 @@ def validate_drgv2(filename, comp_ids, vcnobj):
         if drg_name.lower() == 'nan':
             log(f'ROW {i + 3} : Empty value at column "DRG Name".')
             drgv2_empty_check = True
-        if drg_name not in vcnobj.vcns_having_drg.values():
+        if drg_name not in vcnobj.vcns_having_drg.values() and "ocid1.drg.oc" not in drg_name:
             log(f'ROW {i + 3}: DRG Name {drg_name} not part of VCNs Tab.')
             drgv2_drg_check = True
 
@@ -652,14 +666,14 @@ def validate_drgv2(filename, comp_ids, vcnobj):
                 drgv2_format_check = True
             else:
                 attached_to=attached_to.split("::")
-                if(len(attached_to)!=2):
+                if(len(attached_to)< 2 and len(attached_to) > 3):
                     log(f'ROW {i + 3} : Wrong value at column Attached To - {attached_to}. Valid format is <ATTACH_TYPE>::<ATTACH_ID>')
                     drgv2_format_check = True
                 elif attached_to[0].strip().upper()=="VCN":
                     vcn_name = attached_to[1].strip()
 
                     try:
-                        if (vcn_name.lower() != "nan" and vcnobj.vcns_having_drg[vcn_name,region]!=drg_name):
+                        if (vcn_name.lower() != "nan" and vcnobj.vcns_having_drg[vcn_name,region]!=drg_name) and "ocid1.drg.oc" not in drg_name:
                             log(f'ROW {i + 3}: VCN {vcn_name} in column Attached To is not as per DRG Required column of VCNs Tab.')
                             drgv2_vcn_check = True
                     except KeyError:
@@ -714,7 +728,7 @@ def validate_dns(filename,comp_ids):
             log(f'ROW {i + 3} : Empty value at column "Region".')
             mandat_val_check = True
         elif region not in ct.all_regions:
-            log(f'ROW {i + 3} : "Region" {region} is not subscribed for tenancy.')
+            log(f'ROW {i + 3} : Either "Region" {region} is not subscribed to tenancy or toolkit is not yet configured to be used for this region.')
             mandat_val_check = True
 
         # Check for invalid Compartment Name
@@ -724,6 +738,7 @@ def validate_dns(filename,comp_ids):
             mandat_val_check = True
         else:
             try:
+                comp_name = commonTools.check_tf_variable(comp_name)
                 comp_id = comp_ids[comp_name]
             except KeyError:
                 log(f'ROW {i + 3} : Compartment {comp_name} does not exist in OCI.')
@@ -738,11 +753,15 @@ def validate_dns(filename,comp_ids):
         rtype = str(dfdns.loc[i, 'RType']).strip()
         rdata = str(dfdns.loc[i, 'RDATA']).strip()
         ttl = str(dfdns.loc[i, 'TTL']).strip()
-        if zone_name.lower() != 'nan' and (domain_name.lower() == 'nan' or rtype.lower() == 'nan' or rdata.lower() == 'nan' or ttl.lower() == 'nan'):
-            log(f'ROW {i + 3} : Please validate domain, rtype, rdata and ttl for zone {zone_name}. It can not be null')
+        nan_count = 0
+        for item in [domain_name,rtype,rdata,ttl]:
+            if item.lower() == 'nan':
+                nan_count +=1
+        if nan_count in [1,2,3]:
+            log(f'ROW {i + 3} : one or more of the required( Domain, RType, RDATA and TTL) parameter is missing for a record creation')
             mandat_val_check = True
 
-        if (domain_name.lower() != 'nan' or rtype.lower() != 'nan' or rdata.lower() != 'nan' or ttl.lower() != 'nan') and zone_name.lower == 'nan':
+        if 'nan' not in [domain_name.lower(),rtype.lower(),rdata.lower(),ttl.lower()] and zone_name.lower() == 'nan':
             log(f'ROW {i + 3} : Zone name can not be null')
             mandat_val_check = True
 
@@ -759,7 +778,7 @@ def validate_dns(filename,comp_ids):
             log(f'ROW {i + 3} : Empty value at column "Region".')
             mandat_val_check = True
         elif region not in ct.all_regions:
-            log(f'ROW {i + 3} : "Region" {region} is not subscribed for tenancy.')
+            log(f'ROW {i + 3} : Either "Region" {region} is not subscribed to tenancy or toolkit is not yet configured to be used for this region.')
             mandat_val_check = True
 
         # Check for invalid Compartment Name
@@ -769,6 +788,7 @@ def validate_dns(filename,comp_ids):
             mandat_val_check = True
         else:
             try:
+                comp_name = commonTools.check_tf_variable(comp_name)
                 comp_id = comp_ids[comp_name]
             except KeyError:
                 log(f'ROW {i + 3} : Compartment {comp_name} doesnot exist in OCI.')
@@ -799,6 +819,7 @@ def validate_dns(filename,comp_ids):
                 log(f'ROW {i+3} : Incorrect format for Associated Private Views')
                 mandat_val_check = True
             try:
+                v_comp = commonTools.check_tf_variable(v_comp)
                 comp_id = comp_ids[v_comp]
             except KeyError:
                 log(f'ROW {i + 3} : Compartment {v_comp} does not exist in OCI.')
@@ -833,7 +854,7 @@ def validate_instances(filename,comp_ids,subnetobj,vcn_subnet_list,vcn_nsg_list)
             log(f'ROW {i+3} : Empty value at column "Region".')
             inst_empty_check = True
         elif region not in ct.all_regions:
-            log(f'ROW {i+3} : "Region" {region} is not subscribed for tenancy.')
+            log(f'ROW {i+3} : Either "Region" {region} is not subscribed to tenancy or toolkit is not yet configured to be used for this region.')
             inst_invalid_check = True
 
         # Check for invalid Compartment Name
@@ -843,6 +864,7 @@ def validate_instances(filename,comp_ids,subnetobj,vcn_subnet_list,vcn_nsg_list)
             inst_empty_check = True
         else:
             try:
+                comp_name=commonTools.check_tf_variable(comp_name)
                 comp_id = comp_ids[comp_name]
             except KeyError:
                 log(f'ROW {i+3} : Compartment {comp_name} does not exist in OCI.')
@@ -879,23 +901,27 @@ def validate_instances(filename,comp_ids,subnetobj,vcn_subnet_list,vcn_nsg_list)
 
             if columnname == 'Display Name':
                 if columnvalue.lower()=='nan':
-                    log(f'ROW {i+3} : Empty value at column Display Name')
+                    log(f'ROW {i+3} : Empty value at column "Display Name"')
                     inst_empty_check = True
 
-            if columnname == 'Subnet Name':
+            if columnname == 'Network Details':
                 if columnvalue.lower()=='nan':
-                    log(f'ROW {i+3} : Empty value at column Subnet Name.')
+                    log(f'ROW {i+3} : Empty value at column "Network Details"')
                     inst_empty_check = True
                 else:
                     # Cross check the VCN names in Instances and VCNs sheet
-                    vcn_subnet_check = compare_values(vcn_subnet_list.tolist(), columnvalue,[i, 'Subnet Name', 'SubnetsVLANs'])
+                    #vcn_subnet_check = compare_values(vcn_subnet_list.tolist(), columnvalue,[i, 'Subnet Name', 'SubnetsVLANs'])
+                    if ("::" not in columnvalue):
+                        log(f'ROW {i + 3} : Invalid syntax at column "Network Details"')
+                        vcn_subnet_check = True
+
 
             if columnname == 'Source Details':
                 if columnvalue.lower()== 'nan':
                     log(f'ROW {i+3} : Empty value at column "Source Details".')
                     inst_empty_check = True
 
-                elif (not columnvalue.startswith("image::") and not columnvalue.startswith("bootVolume::")):
+                elif (not columnvalue.startswith("image::") and not columnvalue.startswith("bootVolume::") and not columnvalue.startswith("ocid1.image.oc") and not columnvalue.startswith("ocid1.bootvolume.oc")):
                     log(f'ROW {i+3} : Wrong value at column Source Details - {columnvalue}. Valid format is image::<var_name> or bootVolume::<var_name>.')
                     inst_invalid_check = True
 
@@ -914,10 +940,11 @@ def validate_instances(filename,comp_ids,subnetobj,vcn_subnet_list,vcn_nsg_list)
                             log(f'ROW {i+3} : Wrong value at column Shape - {columnvalue}.Valid format for Flex Shapes is VM.Standard.E3.Flex::<ocpus>.')
                             inst_invalid_check = True
 
-            if vcn_subnet_check==False and columnname == "NSGs":
-                subnet_name = str(dfinst.loc[i, "Display Name"]).strip()
-                if(columnvalue!='nan'):
-                    vcn_nsg_check = validate_nsgs_column(i,region,columnvalue,subnet_name,subnetobj,vcn_nsg_list)
+
+            #if vcn_subnet_check==False and columnname == "NSGs":
+            #    subnet_name = str(dfinst.loc[i, "Display Name"]).strip()
+            #    if(columnvalue!='nan'):
+            #        vcn_nsg_check = validate_nsgs_column(i,region,columnvalue,subnet_name,subnetobj,vcn_nsg_list)
 
     if any([inst_empty_check, inst_comp_check, inst_invalid_check, vcn_subnet_check,vcn_nsg_check]):
         print("Null or Wrong value Check failed!!")
@@ -931,13 +958,12 @@ def validate_blockvols(filename,comp_ids):
     bvs_comp_check = False
     instance_name_check = False
     bv_ad_check = False
-
+    ADS = ["AD1","AD2","AD3"]
     dfvol = data_frame(filename, 'BlockVolumes')
     dfinst = data_frame(filename, 'Instances')
     values_list = dfinst['Display Name'].tolist()
     inst_ad_list = dfinst['Display Name']+'_'+dfinst['Availability Domain(AD1|AD2|AD3)']
     dfcolumns = dfvol.columns.values.tolist()
-
     for i in dfvol.index:
         region = str(dfvol.loc[i, 'Region']).strip().lower()
 
@@ -948,7 +974,7 @@ def validate_blockvols(filename,comp_ids):
             log(f'ROW {i+3} : Empty value at column "Region".')
             bvs_empty_check = True
         elif region not in ct.all_regions:
-            log(f'ROW {i+3} : Region {region} is not subscribed to tenancy.')
+            log(f'ROW {i+3} : Either "Region" {region} is not subscribed to tenancy or toolkit is not yet configured to be used for this region.')
             bvs_invalid_check = True
 
         # Check for invalid Compartment Name
@@ -958,6 +984,7 @@ def validate_blockvols(filename,comp_ids):
             bvs_empty_check = True
         else:
             try:
+                comp_name = commonTools.check_tf_variable(comp_name)
                 comp_id = comp_ids[comp_name]
             except KeyError:
                 log(f'ROW {i+3} : Compartment {comp_name} doesnot exist in OCI.')
@@ -972,7 +999,24 @@ def validate_blockvols(filename,comp_ids):
                 if columnvalue.lower() == 'nan':
                     log(f'ROW {i+3} : Empty value at column "Block Name".')
                     bvs_empty_check = True
-
+            if columnname == 'VPUs per GB':
+                if columnvalue.lower() != 'nan':
+                    if columnvalue.isnumeric():
+                        if int(columnvalue) < 10 or int(columnvalue) > 120 or int(columnvalue) % 10 != 0:
+                            log(f'ROW {i+3} : Wrong value at column "VPUs per GB". Must be integer between 10 to 120 and multiple of 10.')
+                            bvs_invalid_check = True
+                    else:
+                        log(f'ROW {i + 3} : Wrong value at column "VPUs per GB". Must be integer between 10 to 120 and multiple of 10.')
+                        bvs_invalid_check = True
+            if columnname == 'Size In GBs':
+                if columnvalue.lower() != 'nan':
+                    if columnvalue.isnumeric():
+                        if int(columnvalue) < 50 or int(columnvalue) > 31744:
+                            log(f'ROW {i+3} : Wrong value at column "Size In GBs". Must be integer between 50 to 31744')
+                            bvs_invalid_check = True
+                    else:
+                        log(f'ROW {i + 3} : Wrong value at column "Size In GBs". Must be integer between 50 to 31744')
+                        bvs_invalid_check = True
             if (columnname == 'Availability Domain(AD1|AD2|AD3)'):
                 if columnvalue.lower() == 'nan':
                     log(f'ROW {i+3} : Empty value at column "Availability Domain".')
@@ -984,7 +1028,61 @@ def validate_blockvols(filename,comp_ids):
                 if columnvalue.lower()!='nan' and columnvalue!="iscsi" and columnvalue!="paravirtualized":
                     log(f'ROW {i+3} :  Wrong value at column "Attach Type" - {columnvalue}.')
                     bvs_invalid_check = True
+            if commonTools.check_column_headers(columnname) == 'kms_key_id':
+                if columnvalue.lower() != 'nan' and (not columnvalue.strip().startswith("ocid1.key.oc")):
+                    log(f'ROW {i+3} : Kms Key ID is not in correct format.')
+                    bvs_invalid_check = True
+            if commonTools.check_column_headers(columnname) == 'kms_key_id' and columnvalue.lower() != 'nan' and str(dfvol.loc[i, 'Block Volume Replica (Region::AD::Name)']).strip().lower() != 'nan':
+                log(f'ROW {i + 3} : Volume replication is not supported along with volume encryption with Customer Managed Keys.')
+                bvs_invalid_check = True
+            if columnname == 'Block Volume Replica (Region::AD::Name)':
+                if columnvalue.lower() != 'nan' and columnvalue.lower() != '' and "::" not in columnvalue.strip():
+                    log(f'ROW {i + 3} : Block Volume Replicas Availability Domain not in correct format. Check column "' +columnname+"\"")
+                    bvs_invalid_check = True
+                elif columnvalue.lower() != 'nan' and columnvalue.lower() != '' and "::" in columnvalue.strip():
+                    block_volume_replicas_ads = columnvalue.strip().split("::")
+                    block_volume_replicas_region = (block_volume_replicas_ads[0]).lower()
+                    block_volume_replicas_ad = (block_volume_replicas_ads[1]).upper()
+                    if block_volume_replicas_region not in ct.all_regions or block_volume_replicas_ad not in ADS:
+                        log(f'ROW {i + 3} : Volume replication Region is not subscribed to tenancy or toolkit is not yet configured to be used for this region or AD is not present in destination region. Check column "' +columnname+"\"")
+                        bvs_invalid_check = True
+                    elif block_volume_replicas_region == str(dfvol.loc[i, 'Region']).strip().lower() and block_volume_replicas_ad == str(dfvol.loc[i, 'Availability Domain(AD1|AD2|AD3)']).strip().upper():
+                        log(f'ROW {i + 3} : Replication Region and AD can not be same as Volume Region and AD. Check column "' +columnname+"\"")
+                        bvs_invalid_check = True
+            if columnname == 'Source Details':
+                if columnvalue.lower() != 'nan' and columnvalue.lower() != '':
+                    if not (columnvalue.strip().startswith("ocid1.volume.oc") or columnvalue.strip().startswith(
+                            "ocid1.volumebackup.oc") or columnvalue.strip().startswith(
+                        "ocid1.blockvolumereplica.oc") or columnvalue.strip().startswith(
+                        "volumeBackup::") or columnvalue.strip().startswith(
+                        "volume::") or columnvalue.strip().startswith("blockVolumeReplica::")):
+                        log(f'ROW {i + 3} : Source Details not in correct format. Check column "' +columnname+"\"")
+                        bvs_invalid_check = True
+            if columnname == 'Autotune Type':
+                if columnvalue.lower() != 'nan' and columnvalue.lower() != '' and columnvalue.strip().upper() not in ["BOTH","PERFORMANCE_BASED","DETACHED_VOLUME"]:
+                    log(f'ROW {i + 3} : Value must be either PERFORMANCE_BASED or DETACHED_VOLUME or BOTH. Check column "' +columnname+"\"")
+                    bvs_invalid_check = True
+                elif columnvalue.strip().upper() == "BOTH" or columnvalue.strip().upper() == "PERFORMANCE_BASED":
+                    if "Max VPUS Per GB" in dfcolumns:
+                        if str(dfvol.loc[i, 'Max VPUS Per GB']).strip().lower() == 'nan':
+                            log(f'ROW {i + 3} : For Autotune Type PERFORMANCE_BASED or BOTH column "Max VPUS Per GB" can not be left blank.')
+                            bvs_invalid_check = True
+                    else:
+                        log(f'ROW {i + 3} : For Autotune Type PERFORMANCE_BASED or BOTH column "Max VPUS Per GB" must be present in sheet and can not be left blank.')
+                        bvs_invalid_check = True
 
+        if str(dfvol.loc[i, 'Attached To Instance']).strip().lower() != 'nan' and str(
+                dfvol.loc[i, 'Attach Type(iscsi|paravirtualized)']).strip().lower() != 'nan' and str(
+                dfvol.loc[i, 'Device']).strip().lower() != 'nan' and not (re.match("/dev/oracleoci/oraclevd[b-z]$", str(
+                dfvol.loc[i, 'Device']).strip().lower()) or re.match("/dev/oracleoci/oraclevda[a-g]$", str(
+                dfvol.loc[i, 'Device']).strip().lower())):
+            log(f'ROW {i + 3} : Wrong value at column "Device".')
+            bvs_invalid_check = True
+        elif (str(dfvol.loc[i, 'Attached To Instance']).strip().lower() == 'nan' or str(
+                dfvol.loc[i, 'Attach Type(iscsi|paravirtualized)']).strip().lower() == 'nan') and str(
+                dfvol.loc[i, 'Device']).strip().lower() != 'nan':
+            log(f'ROW {i + 3} : Wrong value at column "Device".Attached To Instance and Attach Type can not be left blank')
+            bvs_invalid_check = True
         # Check if values are entered for mandatory fields - to attach volumes to instances
         if str(dfvol.loc[i, 'Attached To Instance']).strip().lower() != 'nan' and str(dfvol.loc[i, 'Attach Type(iscsi|paravirtualized)']).strip().lower() == 'nan':
             log(f'ROW {i+3} : Field "Attach Type" is empty if you want to attach  the volume to instance {dfvol.loc[i,"Attached To Instance"]}.')
@@ -1026,22 +1124,23 @@ def validate_fss(filename,comp_ids,subnetobj,vcn_subnet_list,vcn_nsg_list):
         comp_name = str(df_fss.loc[i, 'Compartment Name']).strip()
         ad_name = str(df_fss.loc[i, 'Availability Domain(AD1|AD2|AD3)']).strip()
         mt_name = str(df_fss.loc[i, 'MountTarget Name']).strip()
-        mt_subnet_name = str(df_fss.loc[i, 'MountTarget SubnetName']).strip()
+        mt_subnet_name = str(df_fss.loc[i, 'Network Details']).strip()
         my_list = [region, comp_name.lower(),ad_name.lower(),mt_name.lower(),mt_subnet_name.lower()]
 
         if all(j == 'nan' for j in my_list):
             pass
         elif 'nan' in my_list:
-            log(f'ROW {i + 3} : Empty value for any of the columns "Region", "Compartment Name", "Availability Domain(AD1|AD2|AD3)", "MountTarget Name", "MountTarget SubnetName"')
+            log(f'ROW {i + 3} : Empty value for any of the columns "Region", "Compartment Name", "Availability Domain(AD1|AD2|AD3)", "MountTarget Name", "Network Details"')
             fss_empty_check = True
 
         if region!='nan' and region not in ct.all_regions:
-            log(f'ROW {i+3} : "Region" {region} is not subscribed for tenancy.')
+            log(f'ROW {i+3} : Either "Region" {region} is not subscribed to tenancy or toolkit is not yet configured to be used for this region.')
             fss_invalid_check = True
 
         # Check for invalid Compartment Name
         if comp_name.lower()!='nan':
             try:
+                comp_name = commonTools.check_tf_variable(comp_name)
                 comp_id = comp_ids[comp_name]
             except KeyError:
                 log(f'ROW {i+3} : Compartment {comp_name} doesnot exist in OCI.')
@@ -1055,15 +1154,17 @@ def validate_fss(filename,comp_ids,subnetobj,vcn_subnet_list,vcn_nsg_list):
                     log(f'ROW {i+3} : Wrong value at column "Availability Domain" - {columnvalue}.')
                     fss_invalid_check = True
 
-            if columnname == 'MountTarget SubnetName':
+            if columnname == 'Network Details':
                 # Cross check the VCN names in Instances and VCNs sheet
                 if(columnvalue!='nan'):
-                    vcn_subnet_check = compare_values(vcn_subnet_list.tolist(), columnvalue,[i, 'Display Name <vcn-name_subnet-name>', 'SubnetsVLANs'])
+                    # vcn_subnet_check = compare_values(vcn_subnet_list.tolist(), columnvalue,[i, 'Display Name <vcn-name_subnet-name>', 'SubnetsVLANs'])
+                    if ("::" not in columnvalue):
+                        vcn_subnet_check = True
 
-            if vcn_subnet_check==False and columnname == "NSGs":
-                subnet_name = str(df_fss.loc[i, "MountTarget SubnetName"]).strip()
-                if (columnvalue != 'nan'):
-                    vcn_nsg_check = validate_nsgs_column(i,region,columnvalue,subnet_name,subnetobj,vcn_nsg_list)
+            #if vcn_subnet_check==False and columnname == "NSGs":
+            #    subnet_name = str(df_fss.loc[i, "MountTarget SubnetName"]).strip()
+            #    if (columnvalue != 'nan'):
+            #        vcn_nsg_check = validate_nsgs_column(i,region,columnvalue,subnet_name,subnetobj,vcn_nsg_list)
 
     if any([fss_empty_check, fss_comp_check, fss_invalid_check, vcn_subnet_check,vcn_nsg_check]):
         print("Null or Wrong value Check failed!!")
@@ -1083,6 +1184,8 @@ def validate_compartments(filename):
 
     for i in dfcomp.index:
         region = str(dfcomp.loc[i, 'Region']).strip().lower()
+        parent_comp = str(dfcomp.loc[i, 'Parent Compartment']).strip().split("::")[-1]
+
         # Encountered <End>
         if (region in commonTools.endNames):
             break
@@ -1095,6 +1198,10 @@ def validate_compartments(filename):
         if str(dfcomp.loc[i, 'Name']).strip().lower() == 'nan':
             log(f'ROW {i+3} : Empty value at column "Name".')
             comp_empty_check = True
+        if(str(dfcomp.loc[i, 'Name']).strip() == parent_comp):
+            log(f'ROW {i + 3} : Name cannot be same as Parent Compartment Name')
+            comp_invalid_check = True
+
 
     if (comp_empty_check == True or parent_comp_check == True or comp_invalid_check == True):
         print("Null or Wrong value Check failed!!")
@@ -1148,6 +1255,7 @@ def validate_policies(filename,comp_ids):
             pass
         else:
             try:
+                comp_name = commonTools.check_tf_variable(comp_name)
                 comp_id = comp_ids[comp_name]
             except KeyError:
                 log(f'ROW {i+3} : Compartment {comp_name} doesnot exist in OCI.')
@@ -1182,7 +1290,7 @@ def validate_policies(filename,comp_ids):
                 dfp.loc[i, 'Name']).strip().lower() == 'nan' and str(
                 dfp.loc[i, 'Compartment Name']).strip().lower() != 'nan' and str(
                 dfp.loc[i, 'Policy Statements']).strip().lower() != 'nan':
-            log(f'ROW {i+3} : Empty value at column Name')
+            log(f'ROW {i+3} : Empty value at column "Name".')
             policies_empty_check = True
 
         if str(dfp.loc[i, 'Policy Statements']).strip().lower() == 'nan':
@@ -1200,6 +1308,17 @@ def validate_policies(filename,comp_ids):
             dfp.loc[i, 'Policy Statements']).strip().lower() != 'nan':
             log(f'ROW {i+3} : Empty value at column "Region" and "Name".')
             policies_empty_check = True
+
+        statement = str(dfp.loc[i, 'Policy Statements']).strip().lower()
+        '''
+        words = statement.split()
+        if ('to' in words):
+            verb = words[words.index('to') + 1]
+            if verb not in ['inspect', 'read', 'use', 'manage']:
+                log(f'ROW {i + 3} : Invalid verb used in Policy Statement')
+                policies_invalid_check = True
+        '''
+
 
     if policies_empty_check == True or policies_comp_check == True or policies_invalid_check == True:
         print("Null or Wrong value Check failed!!")
@@ -1235,6 +1354,7 @@ def validate_tags(filename,comp_ids):
             tag_empty_check = True
         else:
             try:
+                comp_name = commonTools.check_tf_variable(comp_name)
                 comp_id = comp_ids[comp_name]
             except KeyError:
                 log(f'ROW {i + 3} : Compartment {comp_name} doesnot exist in OCI.')
@@ -1244,11 +1364,19 @@ def validate_tags(filename,comp_ids):
         dfcolumns = dftag.columns.values.tolist()
 
         for columnname in dfcolumns:
+            columnvalue = str(dftag[columnname][i])
             # Column value
-            if 'description' in columnname.lower():
-                columnvalue = str(dftag[columnname][i])
-            else:
-                columnvalue = str(dftag[columnname][i]).strip()
+            if columnname == "Tag Description":
+                columnvalue = columnvalue.lower()
+                if str(dftag.loc[i, 'Tag Keys']).strip().lower() != 'nan':
+                    if columnvalue == '' or columnvalue == 'nan':
+                        log(f'ROW {i + 3} : Empty value at column  "Tag Description".')
+                        tag_empty_check = True
+            if columnname == "Namespace Description":
+                columnvalue = columnvalue.lower()
+                if columnvalue == '' or columnvalue == 'nan':
+                    log(f'ROW {i + 3} : Empty value at column  "Namespace Description".')
+                    tag_empty_check = True
 
             if columnname == 'Tag Namespace':
                 columnvalue = str(columnvalue).strip()
@@ -1258,6 +1386,9 @@ def validate_tags(filename,comp_ids):
 
                 if ' ' in columnvalue or '.' in columnvalue:
                     log(f'ROW {i+3} : Spaces and Periods are not allowed in Tag Namespaces.')
+                    tag_invalid_check = True
+                if columnvalue.lower().startswith('oci') or columnvalue.lower().startswith('orcl'):
+                    log(f'ROW {i + 3} : Tag Namespaces cannot start with oci or orcl')
                     tag_invalid_check = True
 
             if columnname == 'Tag Keys':
@@ -1269,12 +1400,70 @@ def validate_tags(filename,comp_ids):
                 if ' ' in columnvalue or '.' in columnvalue:
                     log(f'ROW {i+3} : Spaces and Periods are not allowed in Tag Keys.')
                     tag_invalid_check = True
+                if columnvalue.lower().startswith('oci') or columnvalue.lower().startswith('orcl'):
+                    log(f'ROW {i + 3} : Tag Definition Names cannot start with oci or orcl')
+                    tag_invalid_check = True
 
     if (tag_empty_check == True or  tag_invalid_check == True or tag_comp_check == True):
         print("Null or Wrong value Check failed!!")
         return True
     else:
         return False
+
+def validate_budgets(filename,comp_ids):
+    budget_check_result = []
+
+
+    # Read the Compartments tab from excel
+    dfbudget = data_frame(filename, 'Budgets')
+
+    for i in dfbudget.index:
+        region = str(dfbudget.loc[i, 'Region']).strip().lower()
+        # Encountered <End>
+        if (region in commonTools.endNames):
+            break
+        if region!='nan' and region != ct.home_region:
+            log(f'ROW {i + 3} : It should be Home Region of the tenancy')
+            budget_check_result.append(False)
+        name = str(dfbudget.loc[i, 'Name']).strip().lower()
+        desc = str(dfbudget.loc[i, 'Description']).strip()
+        scope = str(dfbudget.loc[i, 'Scope']).strip().lower().lower()
+        target = str(dfbudget.loc[i, 'Target']).strip()
+        schedule = str(dfbudget.loc[i, 'Schedule']).strip().lower().lower()
+        amount = str(dfbudget.loc[i, 'Amount']).strip().lower()
+        start_day = str(dfbudget.loc[i, 'Start Day']).strip()
+        start_date = str(dfbudget.loc[i, 'Budget Start Date']).strip().lower()
+        end_date = str(dfbudget.loc[i, 'Budget End Date']).strip().lower()
+        rules = str(dfbudget.loc[i, 'Alert Rules']).strip().lower()
+        recipients = str(dfbudget.loc[i, 'Alert Recipients']).strip()
+        message = str(dfbudget.loc[i, 'Alert Message']).strip()
+
+        if rules == 'nan' and (region == 'nan' or name == 'nan' or scope == 'nan' or schedule == 'nan' or amount == 'nan'):
+            log(f'ROW {i + 3} : Empty value at one of the columns "Region/Name/Scope/Schedule/Amount.')
+            budget_check_result.append(False)
+        if schedule == "single_use" and (start_date == 'nan' or end_date == 'nan'):
+            log(f'ROW {i + 3} : Start Date and End Date are mandatory for Single Use Schedule.')
+            budget_check_result.append(False)
+
+        if schedule == "month" and start_day == 'nan':
+            log(f'ROW {i + 3} : \"Start Day\" is mandatory for MONTH Schedule.')
+            budget_check_result.append(False)
+
+        if rules != 'nan' and len(rules.split("::")) < 2:
+            log(f'ROW {i + 3} : \"Alert Rules\" format is not correct".')
+            budget_check_result.append(False)
+        if recipients != 'nan':
+            recipients=recipients.split(",")
+            for rec in recipients:
+                if "@" not in rec:
+                    log(f'ROW {i + 3} : \"Alert Recipients\" format is not correct.')
+                    budget_check_result.append(False)
+
+    if budget_check_result and False in budget_check_result:
+        return False
+    else:
+        return True
+
 
 def validate_buckets(filename, comp_ids):
     # Initialize the flag to False for each bucket
@@ -1314,7 +1503,7 @@ def validate_buckets(filename, comp_ids):
             log(f'ROW {i + 3} : Empty value at column "Region".')
             buckets_empty_check = True
         elif region not in ct.all_regions:
-            log(f'ROW {i + 3} : "Region" {region} is not subscribed for tenancy.')
+            log(f'ROW {i + 3} : Either "Region" {region} is not subscribed to tenancy or toolkit is not yet configured to be used for this region.')
             bucket_reg_check = True
 
         # Check for invalid Compartment Name
@@ -1324,6 +1513,7 @@ def validate_buckets(filename, comp_ids):
             buckets_empty_check = True
         else:
             try:
+                comp_name = commonTools.check_tf_variable(comp_name)
                 comp_id = comp_ids[comp_name]
             except KeyError:
                 log(f'ROW {i + 3} : Compartment {comp_name} does not exist in OCI.')
@@ -1353,17 +1543,21 @@ def validate_buckets(filename, comp_ids):
                 if columnvalue.lower() not in ['standard','archive']:
                     log(f'ROW {i + 3} : Value of "Storage Tier" can be only either "Standard" or "Archive".')
                     buckets_invalid_check = True
-
+                elif columnvalue.lower() == 'archive':
+                    auto_tiering_index = dfcolumns.index('Auto Tiering')
+                    if auto_tiering_index != -1 and str(dfbuckets.loc[i, 'Auto Tiering']).strip().lower() == 'enabled':
+                        log(f'ROW {i + 3} : Auto Tiering cannot be "Enabled" when Storage Tier is "Archive".')
+                        buckets_invalid_check = True
 
             if columnname == 'Auto Tiering':
                 if columnvalue.lower() not in ['enabled','disabled']:
                     log(f'ROW {i + 3} : Value of "Auto Tiering" can be only either "Enabled" or "Disabled".')
                     buckets_invalid_check = True
 
-
+            # Check for the Object Versioning column
             if columnname == 'Object Versioning':
-                if columnvalue.lower() not in ['enabled','disabled']:
-                    log(f'ROW {i + 3} : Value of "Object Versioning" can be only either "Enabled" or "Disabled".')
+                if columnvalue.lower() not in ['enabled', 'disabled']:
+                    log(f'ROW {i + 3} : Value of "Object Versioning" can only be "Enabled" or "Disabled".')
                     buckets_invalid_check = True
 
             if columnname == 'Emit Object Events':
@@ -1377,69 +1571,110 @@ def validate_buckets(filename, comp_ids):
                     log(f'ROW {i + 3} : Value of "Visibility" can be only either "Private" or "Public".')
                     buckets_invalid_check = True
 
-            #Check for valid destination region for enabling the replication policy
-            if columnname == 'Replication Policy':
-                columnvalue= columnvalue.split("::")
-                if len(columnvalue) == 3 and all(columnvalue):
-                 replication_policy_name = columnvalue[0]
-                 destination_region = columnvalue[1].lower()
-                 if destination_region in ct.region_dict:
-                     destination_region = ct.region_dict[destination_region]
-                 else:
-                    log(f'ROW {i + 3} : The "Destination_region" of replication policy is not a valid region.')
+            # Check for valid destination region for enabling the replication policy
+            if columnname == 'Replication Policy' and columnvalue != "nan":
+                columnvalue = columnvalue.split("::")
+                if len(columnvalue) == 3:
+                    replication_policy_name = columnvalue[0]
+                    destination_region = columnvalue[1].lower()
+                    destination_bucket_name = columnvalue[2]
+                    if replication_policy_name.strip() and destination_bucket_name.strip():
+                        if destination_region in ct.region_dict:
+                            destination_region = ct.region_dict[destination_region]
+                        else:
+                            log(f'ROW {i + 3} : The "Destination_region" of replication policy is not a valid region.')
+                            buckets_invalid_check = True
+                    else:
+                        log(f'ROW {i + 3} : The replication policy format is incorrect or policy name/destination bucket is empty.')
+                        buckets_invalid_check = True
+                else:
+                    log(f'ROW {i + 3} : The replication policy format is incorrect.')
                     buckets_invalid_check = True
 
+            # Get the current time
+            current_time = datetime.datetime.utcnow()
             #Check for the retention policy details
             if columnname == 'Retention Rules':
+                if columnvalue == "nan":
+                    continue
                 rule_values = columnvalue.split("\n")
-                retention_rules = []
-                for rule in rule_values:
-                    rule_components = rule.split("::")
-                    if len(rule_components) >= 1:
-                        retention_rule_display_name = rule_components[0]
-                        time_unit = None
-                        time_amount = None
-                        time_rule_locked = None
+                if rule_values and str(dfbuckets.loc[i, 'Object Versioning']).strip().lower() == 'enabled':
+                    log(f'ROW {i + 3} : Retention policy cannot be created when Object Versioning is enabled.')
+                    buckets_invalid_check = True
 
-                        if len(rule_components) >= 2:
-                            if rule_components[1].lower() == 'indefinite':
-                                time_amount = None
-                            else:
-                                time_amount = rule_components[1]
-                                if not time_amount.isdigit():
-                                    log(f'ROW {i + 3} : "time_amount" of retention rule is not in valid format. It should be an "integer" or "indefinite".')
-                                    buckets_invalid_check = True
-                                    continue
+                elif rule_values and str(dfbuckets.loc[i, 'Object Versioning']).strip().lower() == 'disabled':
+                    retention_rules = []
+                    for rule in rule_values:
+                        rule_components = rule.split("::")
+                        if len(rule_components) >= 1:
+                            retention_rule_display_name = rule_components[0]
+                            time_unit = None
+                            time_amount = None
+                            time_rule_locked = None
+
+                            if len(rule_components) >= 2:
+                                if rule_components[1].lower() == 'indefinite':
+                                    time_amount = None
                                 else:
-                                    time_amount = int(time_amount)
-
-                        if len(rule_components) >= 3:
-                            time_unit = rule_components[2].upper()
-                            if time_unit not in ('DAYS', 'YEARS'):
-                                log(f'ROW {i + 3} : "time_unit" of retention rule is not in valid format. It should be either DAYS or YEARS.')
-                                buckets_invalid_check = True
-                            else:
-                                # If time_unit is valid, set the flag to True for processing time_rule_locked
-                                process_time_rule_locked = True
-
-                        if len(rule_components) == 4 and process_time_rule_locked:
-                            time_rule_locked = rule_components[3]
-                            if time_rule_locked.endswith(".000Z"):
-                                time_rule_locked = time_rule_locked[:-5] + "Z"
-                            elif not re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z",time_rule_locked):
-                                # Convert from "dd-mm-yyyy" to "YYYY-MM-DDThh:mm:ssZ" format
-                                if re.match(r"\d{2}-\d{2}-\d{4}", time_rule_locked):
-                                    try:
-                                        datetime_obj = datetime.datetime.strptime(time_rule_locked, "%d-%m-%Y")
-                                        time_rule_locked = datetime_obj.strftime("%Y-%m-%dT%H:%M:%SZ")
-                                    except ValueError:
-                                        log(f'ROW {i + 3} : "time_rule_locked" of retention rule is not in valid format. It should be in the format "dd-mm-yyyy".')
+                                    time_amount = rule_components[1]
+                                    if not time_amount.isdigit():
+                                        log(f'ROW {i + 3} : "time_amount" of retention rule is not in valid format. It should be an "integer" or "indefinite".')
                                         buckets_invalid_check = True
                                         continue
-                                else:
-                                    log(f'ROW {i + 3} : "time_rule_locked" of retention rule is not in valid format. It should be in the format "dd-mm-yyyy".')
+                                    else:
+                                        time_amount = int(time_amount)
+
+                            if len(rule_components) >= 3:
+                                time_unit = rule_components[2].upper()
+                                if time_unit not in ('DAYS', 'YEARS'):
+                                    log(f'ROW {i + 3} : "time_unit" of retention rule is not in valid format. It should be either DAYS or YEARS.')
                                     buckets_invalid_check = True
-                                    continue
+                                else:
+                                    # If time_unit is valid, set the flag to True for processing time_rule_locked
+                                    process_time_rule_locked = True
+
+                            if len(rule_components) == 4 and process_time_rule_locked:
+                                time_rule_locked = rule_components[3]
+                                if time_rule_locked:
+                                    if time_rule_locked.endswith(".000Z"):
+                                        time_rule_locked = time_rule_locked[:-5] + "Z"
+                                    elif not re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.*Z",time_rule_locked):
+                                        # Convert from "dd-mm-yyyy" to "YYYY-MM-DDThh:mm:ssZ" format
+                                        if re.match(r"\d{2}-\d{2}-\d{4}", time_rule_locked):
+                                            try:
+                                                datetime_obj = datetime.datetime.strptime(time_rule_locked, "%d-%m-%Y")
+                                                time_rule_locked = datetime_obj.strftime("%Y-%m-%dT%H:%M:%SZ")
+                                            except ValueError:
+                                                log(f'ROW {i + 3} : "time_rule_locked" of retention rule is not in valid format. It should be in the format "dd-mm-yyyy".')
+                                                buckets_invalid_check = True
+                                                continue
+                                        else:
+                                            log(f'ROW {i + 3} : "time_rule_locked" of retention rule is not in valid format. It should be in the format "dd-mm-yyyy".')
+                                            buckets_invalid_check = True
+                                            continue
+                                    # Parse the time_rule_locked into a datetime object
+                                    try:
+                                        if len(time_rule_locked.split(".")) > 1:
+                                            time_rule_locked_datetime = datetime.datetime.strptime(time_rule_locked,
+                                                                                                   "%Y-%m-%dT%H:%M:%S.%fZ"
+                                                                                                   )
+                                        else:
+                                            time_rule_locked_datetime = datetime.datetime.strptime(time_rule_locked, "%Y-%m-%dT%H:%M:%SZ")
+                                    except ValueError:
+                                        log(f'ROW {i + 3} : "time_rule_locked" of retention rule is not in valid format. It should be in the format "YYYY-MM-DDThh:mm:ssZ".')
+                                        buckets_invalid_check = True
+                                        continue
+
+                                    # Calculate the difference between current time and time_rule_locked
+                                    time_difference = time_rule_locked_datetime - current_time
+
+                                    # Check if the difference is less than 14 days
+                                    if time_difference.days < 14:
+                                        log(f'ROW {i + 3} : "time_rule_locked" of retention rule must be more than 14 days from the current time.')
+                                        buckets_invalid_check = True
+                                else:
+                                    # No action is required since time_rule_locked is optional
+                                    log(f'ROW {i + 3} : "time_rule_locked" is optional and skipped.')
 
             # Check for the Lifecycle Policy Details
             if lifecycle_input == True:
@@ -1452,7 +1687,6 @@ def validate_buckets(filename, comp_ids):
                     'previous-object-versions::Delete',
                     'multipart-uploads::Abort'
                 ]
-
 
                 # Check if "Lifecycle Target and Action" is empty
                 if columnname == 'Lifecycle Target and Action':
@@ -1485,6 +1719,7 @@ def validate_buckets(filename, comp_ids):
                             if time_unit not in ['days','years']:
                                 log(f'ROW {i + 3} : Invalid time amount. "Lifecycle Rule Period" must be "DAYS" or "YEARS".')
                                 buckets_invalid_check = True
+
                         else:
                             log(f'ROW {i + 3} : Invalid format for  "Lifecycle Rule Period" ')
                             buckets_invalid_check = True
@@ -1495,20 +1730,186 @@ def validate_buckets(filename, comp_ids):
     else:
         return False
 
-def validate_cd3(filename, var_file, prefix, outdir, choices, configFileName):
+
+#validate_kms
+def validate_kms(filename,comp_ids):
+
+    dfkms = data_frame(filename, 'KMS')
+    kms_invalid_check = False
+    prev_vault_type = ""
+
+    for i in dfkms.index:
+        region = str(dfkms.loc[i, 'Region']).strip().lower()
+        # Encountered <End>
+        if (region in commonTools.endNames):
+            break
+        if region == 'nan':
+            pass
+        elif region != 'nan' and region not in ct.all_regions:
+            log(f'ROW {i + 3} : Either "Region" {region} is not subscribed to tenancy or toolkit is not yet configured to be used for this region.')
+            kms_invalid_check = True
+
+        vault_compartment_name = str(dfkms.loc[i, 'Vault Compartment Name']).strip()
+        vault_display_name = str(dfkms.loc[i, 'Vault Display Name']).strip()
+        replica_region = str(dfkms.loc[i, 'Replica Region']).strip().lower()
+        key_compartment_name = str(dfkms.loc[i, 'Key Compartment Name']).strip()
+        key_display_name = str(dfkms.loc[i, 'Key Display Name']).strip()
+        protection_mode = str(dfkms.loc[i, 'Protection mode']).strip()
+        algorithm = str(dfkms.loc[i, 'Algorithm']).strip()
+        length_in_bits = dfkms.loc[i,'Length in bits']
+        curve_id = str(dfkms.loc[i, 'Curve Id']).strip()
+        auto_rotation = dfkms.loc[i, 'Auto rotation']
+        rotation_interval_in_days = dfkms.loc[i, 'Rotation interval in days']
+
+        current_vault_type = str(dfkms.loc[i, 'Vault type'])
+        if current_vault_type != 'nan':
+            vault_type = current_vault_type
+            if vault_type.lower() not in ['default', 'virtual_private']:
+                log(f'ROW {i + 3}: Invalid Vault_type!!. Vault type should be either "DEFAULT" or "VIRTUAL_PRIVATE". ')
+                kms_invalid_check = True
+            prev_vault_type = vault_type
+
+        else:
+            vault_type = prev_vault_type
+
+        if (str(dfkms.loc[i, 'Vault Compartment Name']).strip() != 'nan' or str(dfkms.loc[i, 'Vault Display Name']).strip()!= 'nan' or str(dfkms.loc[i, 'Vault type']) != 'nan'):
+
+           # Check Vault Compartment name
+            if vault_compartment_name == 'nan' or vault_compartment_name == '':
+                log(f'ROW {i + 3} : Empty value at column "Vault Compartment Name".')
+                pass
+            else:
+                try:
+                    vault_comp_name = commonTools.check_tf_variable(vault_comp_name)
+                    comp_id = comp_ids[vault_compartment_name]
+                except KeyError:
+                    log(f'ROW {i+3} : Compartment {vault_compartment_name} does not exist in OCI.')
+                    kms_invalid_check = True
+
+            # Check Vault display name
+            if vault_display_name == 'nan' or vault_display_name == '':
+                log(f'ROW {i + 3} : Empty value at column "Vault Display Name".')
+                kms_invalid_check = True
+            else:
+                if re.match("^[A-Za-z0-9_-]{1,100}$", vault_display_name.lower()):
+                    pass
+                else:
+                    kms_invalid_check = True
+                    log(f'ROW {i + 3} : "Vault Name" can only contain letters (upper or lower case), numbers, hyphens and underscores.')
+
+           # Check Replica region
+            if replica_region == region:
+                log(f'ROW {i+3}: Replica region cannot be same as the primary Vault region')
+                kms_invalid_check = True
+            elif (replica_region in commonTools.endNames):
+                break
+            elif replica_region == 'nan':
+                pass
+            elif replica_region != 'nan' and replica_region not in ct.all_regions:
+                log(f'ROW {i + 3} : "Replica Region" {replica_region} is either not subscribed to tenancy or toolkit is not yet configured to be used for this region')
+                kms_invalid_check = True
+
+
+        #Check Keys columns
+        if (key_compartment_name != 'nan' or key_display_name != 'nan'):
+            #Check for empty values
+            if (key_compartment_name == 'nan' or  key_display_name == 'nan' or  protection_mode == 'nan' or algorithm == 'nan' or str(length_in_bits) == 'nan') :
+                log(f'ROW {i + 3} : Empty values found at one or more places in these columns: Key Compartment Name/ Key Display Name/ Protection mode/ Algorithm/ Length in bits')
+                kms_invalid_check = True
+
+            else:
+                # Check Key Compartment name
+                if key_compartment_name != 'nan' or key_compartment_name != '':
+                    try:
+                        key_compartment_name = commonTools.check_tf_variable(key_compartment_name)
+                        comp_id = comp_ids[key_compartment_name]
+                    except KeyError:
+                        log(f'ROW {i + 3} : Compartment {key_compartment_name} does not exist in OCI.')
+                        kms_invalid_check = True
+
+                # Check key display name
+                if key_display_name == 'nan' or key_display_name == '':
+                    log(f'ROW {i + 3} : Empty value at column "Key Display Name".')
+                    kms_invalid_check = True
+                else:
+                    if re.match("^[A-Za-z0-9_-]{1,100}$", key_display_name.lower()):
+                        pass
+                    else:
+                        kms_invalid_check = True
+                        log(f'ROW {i + 3} : "Key Name" can only contain letters (upper or lower case), numbers, hyphens and underscores.')
+
+                # Check Protection mode
+                if protection_mode.lower() not in ['software', 'hsm']:
+                    log(f'ROW {i + 3} : Invalid value for protection mode. It should be either "software" or "hsm"')
+                    kms_invalid_check = True
+
+                # Check Algorithm
+                if algorithm.lower() not in ['aes', 'rsa', 'ecdsa']:
+                    log(f'ROW {i + 3} : Invalid value for Algorithm. It should be either "aes", "rsa" or "ecdsa"')
+                    kms_invalid_check = True
+
+                # Check Length in bits
+                if algorithm.lower() == "aes" and length_in_bits not in [128, 192, 256]:
+                    log(f'ROW {i + 3} : Invalid length for "{algorithm}".')
+                    kms_invalid_check = True
+                elif algorithm.lower() == "rsa" and length_in_bits not in [2048, 3072, 4096]:
+                    log(f'ROW {i + 3} : Invalid length for "{algorithm}".')
+                    kms_invalid_check = True
+                elif algorithm.lower() == "ecdsa" and length_in_bits not in [256, 384, 521]:
+                    log(f'ROW {i + 3} : Invalid length for "{algorithm}".')
+                    kms_invalid_check = True
+
+                # Check Curve Id
+                if (algorithm.lower() == "aes" or algorithm.lower() == "rsa") and curve_id != 'nan':
+                    log(f'ROW {i + 3} : Curve id is only valid for ECDSA keys')
+                    kms_invalid_check = True
+                elif (algorithm.lower() == "ecdsa" and curve_id not in ['NIST_P256', 'NIST_P384', 'NIST_P521']):
+                    log(f'ROW {i + 3} : Invalid curve id. It should be either "NIST_P256", "NIST_P384" or "NIST_P521."')
+                    kms_invalid_check = True
+
+                elif (algorithm.lower() == "ecdsa" and curve_id in ['NIST_P256', 'NIST_P384', 'NIST_P521']):
+                    if int(re.search(r'\d+', curve_id).group()) != int(length_in_bits):
+                        log(f'ROW {i + 3} : Invalid curve id for the length specified.')
+                        kms_invalid_check = True
+
+                # Check Auto rotation and rotation interval
+                if (vault_type.lower() == 'default' and auto_rotation is True) or (vault_type.lower() == 'default' and str(rotation_interval_in_days) != 'nan'):
+                    log(f'ROW {i + 3} : Auto rotation or Rotation interval can only be set for virtual_private vaults.')
+                    kms_invalid_check = True
+                elif vault_type.lower() == "virtual_private":
+                    if (auto_rotation is True) and str(rotation_interval_in_days) == 'nan':
+                        log(f'ROW {i + 3} : Rotation interval in days value cannot be empty if auto_rotation is enabled')
+                        kms_invalid_check = True
+                    if ((auto_rotation is False) or str(auto_rotation) == 'nan') and str(rotation_interval_in_days) != 'nan':
+                        log(f'ROW {i + 3} : Rotation interval cannot be specified if auto rotation is not enabled.')
+                        kms_invalid_check = True
+                    if str(rotation_interval_in_days) != 'nan' and not (60 <= int(rotation_interval_in_days) <= 365):
+                        log(f'ROW {i + 3} : Invalid Rotation interval. Value should be between 60-365.')
+                        kms_invalid_check = True
+
+    if kms_invalid_check == True:
+        print("Null or Wrong value Check failed!!")
+        return True
+    else:
+        return False
+
+def validate_cd3(choices, filename, var_file, prefix, outdir, ct1): #config1, signer1, ct1):
     CD3_LOG_LEVEL = 60
     logging.addLevelName(CD3_LOG_LEVEL, "custom")
     file=prefix+"_cd3Validator.log"
     resource = "cd3validator"
     customer_tenancy_dir = outdir
     commonTools.backup_file(customer_tenancy_dir,resource,file)
-    logging.basicConfig(filename=customer_tenancy_dir+"/"+file, filemode="w", format="%(asctime)s - %(message)s", level=60)
+    logging.basicConfig(filename=customer_tenancy_dir+"/"+file, filemode="w", format="%(asctime)s - %(message)s", level=60, force = True)
     logger = logging.getLogger("cd3Validator")
     global log
     log = partial(logger.log, CD3_LOG_LEVEL)
+    final_check = []
 
-    global ct
-    ct = commonTools()
+    global ct #, config, signer
+    ct=ct1
+    #config=config1
+    #signer =signer1
     global compartment_ids
     compartment_ids = {}
     global vcn_ids
@@ -1534,15 +1935,18 @@ def validate_cd3(filename, var_file, prefix, outdir, choices, configFileName):
     instances_check = False
     dns_check = False
     buckets_check = False
+    budgets_check = False
+    kms_check = False
+
+    errors = False
 
     if not os.path.exists(filename):
         print("\nCD3 excel sheet not found at "+filename +"\nExiting!!")
-        exit()
-    config = oci.config.from_file(file_location=configFileName)
-    ct.get_subscribedregions(configFileName)
+        exit(1)
+
     #ct.get_network_compartment_ids(config['tenancy'], "root", configFileName)
-    print("Getting Compartments OCIDs...")
-    ct.get_compartment_map(var_file,'Validator')
+    #print("Getting Compartments OCIDs...")
+    all_comp_ocids = ct.get_compartment_map(var_file,'Validator')
 
     vcnobj = parseVCNs(filename)
     subnetobj = parseSubnets(filename)
@@ -1557,85 +1961,116 @@ def validate_cd3(filename, var_file, prefix, outdir, choices, configFileName):
     for options in choices:
         if ('Validate Compartments' in options[0]):
             log("============================= Verifying Compartments Tab ==========================================\n")
-            print("\nProcessing Compartments Tab..")
+            print("\nValidating Compartments Tab..")
             comp_check = validate_compartments(filename)
+            errors = comp_check
         if ('Validate Groups' in options[0]):
             log("\n============================= Verifying Groups Tab ==========================================\n")
-            print("\nProcessing Groups Tab..")
+            print("\nValidating Groups Tab..")
             groups_check = validate_groups(filename)
+            errors =  groups_check
         if ('Validate Policies' in options[0]):
             log("\n============================= Verifying Policies Tab ==========================================\n")
-            print("\nProcessing Policies Tab..")
-            policies_check = validate_policies(filename,ct.ntk_compartment_ids)
+            print("\nValidating Policies Tab..")
+            policies_check = validate_policies(filename,all_comp_ocids)
+            errors =  policies_check
         if ('Validate Tags' in options[0]):
             log("\n============================= Verifying Tags Tab ==========================================\n")
-            print("\nProcessing Tags Tab..")
-            tags_check = validate_tags(filename,ct.ntk_compartment_ids)
+            print("\nValidating Tags Tab..")
+            tags_check = validate_tags(filename,all_comp_ocids)
+            errors = tags_check
+
+        if ('Validate Budgets' in options[0]):
+            log("\n============================= Verifying Budgets Tab ==========================================\n")
+            print("\nValidating Budgets Tab..")
+            budgets_check = validate_budgets(filename,all_comp_ocids)
+            errors = budgets_check
+            final_check.append(budgets_check)
+
+        if ('Validate KMS' in options[0]):
+            log("\n============================= Verifying KMS Tab ==========================================\n")
+            print("\nValidating KMS Tab..")
+            kms_check = validate_kms(filename,all_comp_ocids)
+            errors = kms_check
+
 
         # CD3 Validation begins here for Network
         if ('Validate Network(VCNs, SubnetsVLANs, DHCP, DRGs)' in options[0]):
             val_net=True
 
             log("\n============================= Verifying VCNs Tab ==========================================\n")
-            print("\nProcessing VCNs Tab..")
-            vcn_check, vcn_cidr_check, vcn_peer_check = validate_vcns(filename, ct.ntk_compartment_ids, vcnobj, config)
+            log("\n====================== Note: LPGs will not be verified ====================================\n")
+            print("\nValidating VCNs Tab..")
+            print("NOTE: LPGs will not be verified")
+            vcn_check, vcn_cidr_check, vcn_peer_check = validate_vcns(filename, all_comp_ocids, vcnobj) #, config)
 
             log("============================= Verifying SubnetsVLANs Tab ==========================================\n")
-            print("\nProcessing SubnetsVLANs Tab..")
-            subnet_check, subnet_cidr_check = validate_subnets(filename, ct.ntk_compartment_ids, vcnobj)
+            print("\nValidating SubnetsVLANs Tab..")
+            subnet_check, subnet_cidr_check = validate_subnets(filename, all_comp_ocids, vcnobj)
 
             log("============================= Verifying DHCP Tab ==========================================\n")
-            print("\nProcessing DHCP Tab..")
-            dhcp_check = validate_dhcp(filename, ct.ntk_compartment_ids, vcnobj)
+            print("\nValidating DHCP Tab..")
+            dhcp_check = validate_dhcp(filename, all_comp_ocids, vcnobj)
 
             log("============================= Verifying DRGs Tab ==========================================\n")
-            print("\nProcessing DRGs Tab..")
-            drgv2_check = validate_drgv2(filename, ct.ntk_compartment_ids, vcnobj)
+            print("\nValidating DRGs Tab..")
+            drgv2_check = validate_drgv2(filename, all_comp_ocids, vcnobj)
+
+            if any([vcn_check, vcn_cidr_check, vcn_peer_check, subnet_check, subnet_cidr_check, dhcp_check, drgv2_check]):
+                errors = True
 
         if ('Validate DNS' in options[0]):
-            log("\n============================= Verifying DNS Tab ==========================================\n")
-            print("\nProcessing DNS Tab..")
-            dns_check = validate_dns(filename,ct.ntk_compartment_ids)
+            log("\n============================= Verifying DNS Tabs ==========================================\n")
+            print("\nValidating DNS Tab..")
+            dns_check = validate_dns(filename,all_comp_ocids)
+            errors = dns_check
 
         if ('Validate Instances' in options[0]):
             log("\n============================= Verifying Instances Tab ==========================================\n")
-            print("\nProcessing Instances Tab..")
-            instances_check = validate_instances(filename,ct.ntk_compartment_ids,subnetobj,vcn_subnet_list,vcn_nsg_list)
+            print("\nValidating Instances Tab..")
+            instances_check = validate_instances(filename,all_comp_ocids,subnetobj,vcn_subnet_list,vcn_nsg_list)
+            errors = instances_check
 
         if ('Validate Block Volumes' in options[0]):
             log("\n============================= Verifying BlockVolumes Tab ==========================================\n")
-            print("\nProcessing BlockVolumes Tab..")
-            bvs_check = validate_blockvols(filename,ct.ntk_compartment_ids)
+            print("\nValidating BlockVolumes Tab..")
+            bvs_check = validate_blockvols(filename,all_comp_ocids)
+            errors = bvs_check
 
         if ('Validate FSS' in options[0]):
             log("\n============================= Verifying FSS Tab ==========================================\n")
-            print("\nProcessing FSS Tab..")
-            fss_check = validate_fss(filename,ct.ntk_compartment_ids,subnetobj,vcn_subnet_list,vcn_nsg_list)
+            print("\nValidating FSS Tab..")
+            fss_check = validate_fss(filename,all_comp_ocids,subnetobj,vcn_subnet_list,vcn_nsg_list)
+            errors = fss_check
 
         if ('Validate Buckets' in options[0]):
             log("\n============================= Verifying Buckets Tab ==========================================\n")
-            print("\nProcessing Buckets Tab..")
-            buckets_check = validate_buckets(filename,ct.ntk_compartment_ids)
+            print("\nValidating Buckets Tab..")
+            buckets_check = validate_buckets(filename,all_comp_ocids)
+            errors = buckets_check
 
-    # Prints the final result; once the validation is complete
-    if any([comp_check, groups_check, policies_check, tags_check, instances_check, dns_check, bvs_check,fss_check, vcn_check, vcn_cidr_check, vcn_peer_check, subnet_check, subnet_cidr_check, dhcp_check, drgv2_check,buckets_check]):
+            # Prints the final result; once the validation is complete
+    if any([comp_check, groups_check, policies_check, tags_check, instances_check, dns_check, bvs_check,fss_check, vcn_check, vcn_cidr_check, vcn_peer_check, subnet_check, subnet_cidr_check, dhcp_check, drgv2_check,buckets_check, kms_check]) or False in final_check:
         log("=======")
         log("Summary:")
         log("=======")
         log("ERROR: Make appropriate changes to CD3 Values as per above Errors and try again !!!")
-        print("\n\nSummary:")
-        print("=======")
+        if inspect.stack()[1].function == 'validate_cd3':
+            print("\n\nSummary:")
+            print("=======")
         print("Errors Found!!!")
+
     elif ('q' not in choices and 'm' not in choices):
         log("=======")
         log("Summary:")
         log("=======")
-        log("There are no errors in CD3. Please proceed with TF Generation\n")
+        log("There are no syntax errors in CD3. Proceed with TF Generation.\n")
         if(val_net == True):
             log("Verify LPG's Peering Check Status once in the log file. Otherwise You are good to proceed with TF !!!")
-        print("\n\nSummary:")
-        print("=======")
-        print("There are no errors in CD3. Please proceed with TF Generation\n")
+        if inspect.stack()[1].function == 'validate_cd3':
+            print("\n\nSummary:")
+            print("=======")
+        print("There are no syntax errors in CD3. Proceed with TF Generation.\n")
         if(val_net == True):
             print("Verify LPG's Peering Check Status once in the log file. Otherwise You are good to proceed !!!")
         # exit(0)
@@ -1644,5 +2079,11 @@ def validate_cd3(filename, var_file, prefix, outdir, choices, configFileName):
     else:
         print("Invalid Choice....Exiting!!")
         exit(1)
-    print("Please check the log file at "+customer_tenancy_dir+"/"+file+"\n")
+
+    if inspect.stack()[1].function == 'validate_cd3' or errors:
+        print("Please check the log file at " + customer_tenancy_dir + "/" + file + "\n")
+
+    del(log)
+    del(logger)
+    return errors
 

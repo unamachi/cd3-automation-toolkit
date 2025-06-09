@@ -1,5 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 ############################
 # Variable Block - Storage
 # Create FSS
@@ -39,5 +40,15 @@ variable "kms_key_id" {
 
 variable "source_snapshot_id" {
   type    = string
+  default = null
+}
+
+variable "filesystem_snapshot_policy_id" {
+  type    = string
+  default = null
+}
+
+variable "policy_compartment_id" {
+  type = string
   default = null
 }

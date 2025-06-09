@@ -11,12 +11,12 @@ import sys
 import oci
 from oci.identity import IdentityClient
 import os
+import subprocess as sp
 from commonTools import *
 
 sys.path.append(os.getcwd()+"/..")
 
 compartment_ids={}
-importCommands={}
 tf_name_namespace_list = []
 
 def add_values_in_dict(sample_dict, key, list_of_values):
@@ -27,7 +27,7 @@ def add_values_in_dict(sample_dict, key, list_of_values):
     sample_dict[key].extend(list_of_values)
     return sample_dict
 
-def  print_tags(values_for_column_tags,region, ntk_compartment_name, tag, tag_key, tag_default_value):
+def  print_tags(values_for_column_tags,region, ntk_compartment_name, tag, tag_key, tag_default_value,reg,state):
     validator = ''
     tag_key_name = ''
     tag_key_description = ''
@@ -84,65 +84,74 @@ def  print_tags(values_for_column_tags,region, ntk_compartment_name, tag, tag_ke
 
     tf_name_namespace = commonTools.check_tf_variable(tagname)
     tf_name_key = commonTools.check_tf_variable(tag_key_name)
-    if (tag.id not in tf_name_namespace_list):
-        importCommands[region].write("\nterraform import \"module.tag-namespaces[\\\"" + tf_name_namespace + "\\\"].oci_identity_tag_namespace.tag_namespace\" " + str(tag.id))
+    tf_resource = f'module.tag-namespaces[\\"{tf_name_namespace}\\"].oci_identity_tag_namespace.tag_namespace'
+    if tag.id not in tf_name_namespace_list and tf_resource not in state["resources"]:
+        importCommands[reg] += f'\n{tf_or_tofu} import "{tf_resource}" {str(tag.id)}'
         tf_name_namespace_list.append(tag.id)
-    if ( str(tag_key) != "Nan" ):
-      importCommands[region].write("\nterraform import \"module.tag-keys[\\\""+tf_name_namespace + '_' + tf_name_key + '\\\"].oci_identity_tag.tag\" ' + "tagNamespaces/"+ str(tag.id) +"/tags/\"" + str(tag_key_name) + "\"")
-    if ( tag_default_value != []):
+    tf_resource = f'module.tag-keys[\\"{tf_name_namespace}_{tf_name_key}\\"].oci_identity_tag.tag'
+    if str(tag_key) != "Nan" and tf_resource not in state["resources"]:
+        importCommands[reg] += f'\n{tf_or_tofu} import "{tf_resource}" tagNamespaces/{str(tag.id)}/tags/{str(tag_key_name)}'
+    if tag_default_value != []:
         if len(tag_default_value) != 0:
             for value in tag_default_value:
-                importCommands[region].write("\nterraform import \"module.tag-defaults[\\\""+ tf_name_namespace+'_' +tf_name_key + '_' +commonTools.check_tf_variable(value.split("=")[0]).strip()+ '-default'+ '\\\"].oci_identity_tag_default.tag_default\" ' + str(defaultcomp_to_tagid_map[tf_name_key+"-"+commonTools.check_tf_variable(value.split("=")[0])]))
+                tf_resource = f'module.tag-defaults[\\"{tf_name_namespace}_{tf_name_key}_{commonTools.check_tf_variable(value.split("=")[0]).strip()}-default\\"].oci_identity_tag_default.tag_default'
+                if tf_resource not in state["resources"]:
+                    importCommands[reg] += f'\n{tf_or_tofu} import "{tf_resource}" {str(defaultcomp_to_tagid_map[tf_name_key+"-"+commonTools.check_tf_variable(value.split("=")[0])])}'
+
 
 # Execution of the code begins here
-def export_tags_nongreenfield(inputfile, outdir, service_dir, _config, export_compartments,ct):
+def export_tags_nongreenfield(inputfile, outdir, service_dir, config, signer, ct, export_compartments):
     global tf_import_cmd
     global values_for_column_tags
     global sheet_dict_tags
     global importCommands
-    global config
     global tag_default_comps_map
-    global defaultcomp_to_tagid_map
+    global defaultcomp_to_tagid_map,tf_or_tofu
+    importCommands = {}
+    tf_or_tofu = ct.tf_or_tofu
+    tf_state_list = [tf_or_tofu, "state", "list"]
 
     cd3file = inputfile
-    configFileName = _config
-    config = oci.config.from_file(file_location=configFileName)
+    sheetName="Tags"
 
     if ('.xls' not in cd3file):
         print("\nAcceptable cd3 format: .xlsx")
         exit()
 
     # Read CD3
-    df, values_for_column_tags = commonTools.read_cd3(cd3file, "Tags")
-    if ct==None:
-        ct = commonTools()
-        ct.get_subscribedregions(configFileName)
-        ct.get_network_compartment_ids(config['tenancy'],"root",configFileName)
+    df, values_for_column_tags = commonTools.read_cd3(cd3file, sheetName)
 
     tag_default_comps_map = {}
     tag_name_id_map = {}
     defaultcomp_to_tagid_map = {}
 
     # Get dict for columns from Excel_Columns
-    sheet_dict_tags = ct.sheet_dict["Tags"]
+    sheet_dict_tags = ct.sheet_dict[sheetName]
 
 
     print("\nCD3 excel file should not be opened during export process!!!")
     print("Tabs- Tags would be overwritten during export process!!!\n")
 
-    # Create backups
-    if (os.path.exists(outdir + "/" + ct.home_region + "/" + service_dir + "/tf_import_commands_tags_nonGF.sh")):
-               commonTools.backup_file(outdir + "/" + ct.home_region + "/" + service_dir, "tf_import_tags", "tf_import_commands_tags_nonGF.sh")
-    importCommands[ct.home_region] = open(outdir + "/" + ct.home_region + "/" + service_dir + "/tf_import_commands_tags_nonGF.sh", "w")
-    importCommands[ct.home_region].write("#!/bin/bash")
-    importCommands[ct.home_region].write("\n")
-    importCommands[ct.home_region].write("terraform init")
+    # Create backup
+    resource = 'import_' + sheetName.lower()
+    file_name = 'import_commands_' + sheetName.lower() + '.sh'
+    script_file = f'{outdir}/{ct.home_region}/{service_dir}/' + file_name
+    if (os.path.exists(script_file)):
+        commonTools.backup_file(outdir + "/" + ct.home_region + "/" + service_dir, resource, file_name)
 
+    importCommands[ct.home_region] = ''
     # Fetch Tags
     print("\nFetching Tags...")
-    importCommands[ct.home_region].write("\n\n######### Writing import for Tags #########\n\n")
     config.__setitem__("region", ct.region_dict[ct.home_region])
-    identity = IdentityClient(config,retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY)
+    state = {'path': f'{outdir}/{ct.home_region}/{service_dir}', 'resources': []}
+    try:
+        byteOutput = sp.check_output(tf_state_list, cwd=state["path"], stderr=sp.DEVNULL)
+        output = byteOutput.decode('UTF-8').rstrip()
+        for item in output.split('\n'):
+            state["resources"].append(item.replace("\"", "\\\""))
+    except Exception as e:
+        pass
+    identity = IdentityClient(config=config,retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY,signer=signer)
     region = ct.home_region.lower()
     comp_ocid_done = []
 
@@ -156,7 +165,10 @@ def export_tags_nongreenfield(inputfile, outdir, service_dir, _config, export_co
             if tag_defaults.data != []:
                 for tag_default in tag_defaults.data:
                     if tag_default.tag_definition_name != '(deleted tag definition)':
-                        add_values_in_dict(tag_default_comps_map, tag_default.tag_definition_id+"="+tag_default.tag_definition_name, [ntk_compartment_name+"="+tag_default.value])
+                        my_val=tag_default.value
+                        if tag_default.is_required==True:
+                            my_val=""
+                        add_values_in_dict(tag_default_comps_map, tag_default.tag_definition_id+"="+tag_default.tag_definition_name, [ntk_compartment_name+"="+my_val])
                     defaultcomp_to_tagid_map.update({ commonTools.check_tf_variable(str(tag_default.tag_definition_name).replace('\\','\\\\'))+"-"+commonTools.check_tf_variable(ntk_compartment_name) : tag_default.id })
 
     comp_ocid_done = []
@@ -185,8 +197,7 @@ def export_tags_nongreenfield(inputfile, outdir, service_dir, _config, export_co
                         tag_default_check.append(str(tag_key.id))
                         tag_default_value = tag_default_comps_map[tag_key.id+"="+tag_key.name]
                         tag_namespace_check.append(str(tag.id))
-                        print_tags(values_for_column_tags, region, ntk_compartment_name, tag, tag_key,tag_default_value)
-
+                        print_tags(values_for_column_tags, region, ntk_compartment_name, tag, tag_key,tag_default_value,ct.home_region,state)
                 check_non_default_tags = [i for i in tag_key_check + tag_default_check if i not in tag_key_check or i not in tag_default_check]
                 for tag_check in check_non_default_tags:
                     for tag_key in tag_keys.data:
@@ -195,8 +206,7 @@ def export_tags_nongreenfield(inputfile, outdir, service_dir, _config, export_co
                             tag_key = tag_key.data
                             tag_default_value = ''
                             tag_namespace_check.append(str(tag.id))
-                            print_tags(values_for_column_tags, region, ntk_compartment_name, tag, tag_key,tag_default_value)
-
+                            print_tags(values_for_column_tags, region, ntk_compartment_name, tag, tag_key,tag_default_value,ct.home_region,state)
             tag_namespace_check = list(dict.fromkeys(tag_namespace_check))
             check_non_key_tags = [i for i in tag_list + tag_namespace_check if i not in tag_list or i not in tag_namespace_check]
             for tag_check in check_non_key_tags:
@@ -205,12 +215,14 @@ def export_tags_nongreenfield(inputfile, outdir, service_dir, _config, export_co
                 for tag in tags.data:
                     if (tag_check in tag.id):
                         tag = identity.get_tag_namespace(tag.id).data
-                        print_tags(values_for_column_tags, region, ntk_compartment_name, tag, tag_key,tag_default_value)
+                        print_tags(values_for_column_tags, region, ntk_compartment_name, tag, tag_key,tag_default_value,ct.home_region,state)
 
     commonTools.write_to_cd3(values_for_column_tags, cd3file, "Tags")
-    print("Tags exported to CD3\n")
+    print("{0} rows exported into CD3 for Tagging Resources.\n".format(len(values_for_column_tags["Region"])))
 
-    script_file = f'{outdir}/{ct.home_region}/{service_dir}/tf_import_commands_tags_nonGF.sh'
-    with open(script_file, 'a') as importCommands[ct.home_region]:
-        importCommands[ct.home_region].write('\n\nterraform plan\n')
+    init_commands = f'\n######### Writing import for Tagging #########\n\n#!/bin/bash\n{tf_or_tofu} init'
+    if importCommands[ct.home_region] != "":
+        importCommands[ct.home_region] += f'\n{tf_or_tofu} plan\n'
+        with open(script_file, 'a') as importCommandsfile:
+            importCommandsfile.write(init_commands + importCommands[ct.home_region])
 

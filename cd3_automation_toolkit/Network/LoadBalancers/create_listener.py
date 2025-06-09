@@ -18,19 +18,15 @@ from jinja2 import Environment, FileSystemLoader
 # Required Inputs-CD3 excel file, Config file AND outdir
 ######
 # Execution of the code begins here
-def create_listener(inputfile, outdir, service_dir, prefix, config=DEFAULT_LOCATION):
+def create_listener(inputfile, outdir, service_dir, prefix, ct):
     # Load the template file
     file_loader = FileSystemLoader(f'{Path(__file__).parent}/templates')
     env = Environment(loader=file_loader, keep_trailing_newline=True)
     listener = env.get_template('listener-template')
     filename = inputfile
     outdir = outdir
-    configFileName = config
     sheetName = "LB-Listener"
     lb_auto_tfvars_filename = prefix + "_"+sheetName.lower()+".auto.tfvars"
-
-    ct = commonTools()
-    ct.get_subscribedregions(configFileName)
 
     # Read cd3 using pandas dataframe
     df, col_headers = commonTools.read_cd3(filename, sheetName)
@@ -55,6 +51,9 @@ def create_listener(inputfile, outdir, service_dir, prefix, config=DEFAULT_LOCAT
     # Take backup of files
     for reg in ct.all_regions:
         listener_str[reg] = ""
+        srcdir = outdir + "/" + reg + "/" + service_dir + "/"
+        resource = sheetName.lower()
+        commonTools.backup_file(srcdir, resource, lb_auto_tfvars_filename)
 
     # List of the column headers
     dfcolumns = df.columns.values.tolist()
@@ -72,7 +71,7 @@ def create_listener(inputfile, outdir, service_dir, prefix, config=DEFAULT_LOCAT
 
         if region not in ct.all_regions:
             print("\nInvalid Region; It should be one of the values mentioned in VCN Info tab...Exiting!!")
-            exit()
+            exit(1)
 
         # temporary dictionaries
         tempStr= {}
@@ -111,7 +110,7 @@ def create_listener(inputfile, outdir, service_dir, prefix, config=DEFAULT_LOCAT
 
             if columnname == "Certificate Name or OCID":
                 if columnvalue != '':
-                    if 'ocid1.certificate.oc1' not in columnvalue:
+                    if 'ocid1.certificate.oc' not in columnvalue:
                         certificate_tf_name = commonTools.check_tf_variable(columnvalue)+"_cert"
                         tempdict = {'certificate_tf_name': certificate_tf_name}
                     else:
@@ -182,7 +181,7 @@ def create_listener(inputfile, outdir, service_dir, prefix, config=DEFAULT_LOCAT
                 if str(columnvalue).lower() == 'true':
                     if str(df.loc[i,'Verify Depth']) == '' or str(df.loc[i,'Verify Depth']) == 'nan':
                         print("\nVerify Depth cannot be left empty when Verify Peer Certificate has a value... Exiting!!!")
-                        exit()
+                        exit(1)
 
             if columnname == 'SSL Protocols':
                 tls_versions_list = ''
@@ -197,7 +196,7 @@ def create_listener(inputfile, outdir, service_dir, prefix, config=DEFAULT_LOCAT
 
                 elif columnvalue == '' and str(df.loc[i,'Cipher Suite Name']) != 'nan':
                     print("\nSSL Protocols are mandatory when custom CipherSuiteName is provided..... Exiting !!")
-                    exit()
+                    exit(1)
 
                 elif columnvalue != '' and str(df.loc[i,'Cipher Suite Name']) == 'nan':
                     print("NOTE: Cipher Suite Name is not specified for Listener -> "+str(df.loc[i,'Listener Name'])+", default value - 'oci-default-ssl-cipher-suite-v1' will be considered.")
@@ -221,9 +220,7 @@ def create_listener(inputfile, outdir, service_dir, prefix, config=DEFAULT_LOCAT
             listener_str[reg] = listener.render(skeleton=True, count=0, region=reg).replace(src,listener_str[reg]+"\n"+src)
             finalstring = "".join([s for s in listener_str[reg].strip().splitlines(True) if s.strip("\r\n").strip()])
 
-            resource=sheetName.lower()
             srcdir = outdir + "/" + reg + "/" + service_dir + "/"
-            commonTools.backup_file(srcdir, resource, lb_auto_tfvars_filename)
 
             # Write to TF file
             outfile = srcdir + lb_auto_tfvars_filename

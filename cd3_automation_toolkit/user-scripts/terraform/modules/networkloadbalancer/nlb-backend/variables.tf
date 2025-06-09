@@ -1,5 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 #######################################
 # Variable Block - Network Load Balancer
 # Create Network Load Balancer Backend
@@ -30,6 +31,12 @@ variable "port" {
   default     = null
 }
 
+variable "vnic_vlan" {
+  type        = string
+  description = " The VNIC the backend server."
+  default     = null
+}
+
 variable "ip_address" {
   type        = string
   description = " The IP address of the backend server."
@@ -40,6 +47,12 @@ variable "ip_address" {
 variable "is_drain" {
   type        = bool
   description = "Whether the load balancer should drain this server. Servers marked drain receive no new incoming traffic."
+  default     = false # Default value as per hashicorp terraform
+}
+
+variable "is_backup" {
+  type        = bool
+  description = "Whether the load balancer should treat this server as a backup unit."
   default     = false # Default value as per hashicorp terraform
 }
 

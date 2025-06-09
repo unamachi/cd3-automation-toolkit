@@ -1,5 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 ################################
 ## Resource Block - Autonomous database
 ## Create autonomous database
@@ -22,6 +23,12 @@ resource "oci_database_autonomous_database" "autonomous_database" {
   display_name             = var.display_name
   license_model            = var.license_model
   ncharacter_set           = var.ncharacter_set
+  dynamic "customer_contacts" {
+    for_each = var.customer_contacts!=null ? (var.customer_contacts[0] != "" ? var.customer_contacts : []) : []
+    content {
+        email = customer_contacts.value
+    }
+   }
   nsg_ids                  = length(var.network_security_group_ids) != 0 ? (local.nsg_ids == [] ? ["INVALID NSG Name"] : local.nsg_ids) : null
   freeform_tags            = var.freeform_tags
   subnet_id                = var.subnet_id

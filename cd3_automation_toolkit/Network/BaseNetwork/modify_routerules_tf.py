@@ -22,12 +22,8 @@ from jinja2 import Environment, FileSystemLoader
 # ######
 
 # Execution of the code begins here for drg route table
-def modify_terraform_drg_routerules(inputfile, outdir, service_dir,prefix=None, non_gf_tenancy=False, config=DEFAULT_LOCATION):
+def modify_terraform_drg_routerules(inputfile, outdir, service_dir,prefix, ct, non_gf_tenancy):
     filename = inputfile
-    configFileName = config
-
-    ct = commonTools()
-    ct.get_subscribedregions(configFileName)
 
     #Load the template file
     file_loader = FileSystemLoader(f'{Path(__file__).parent}/templates')
@@ -102,7 +98,7 @@ def modify_terraform_drg_routerules(inputfile, outdir, service_dir,prefix=None, 
         # Process RTs only for those DRG which are present in cd3(and have been created via TF)
         try:
             if (DRG_Name not in drgv2.drg_names[region]):
-                print("skipping DRG route table: " + str(df.loc[i, 'DRG RT Name']) + " as its DRG is not part of DRGv2 tab in cd3")
+                print("skipping DRG route table: " + str(df.loc[i, 'DRG RT Name']) + " as its DRG is not part of DRGs tab in cd3")
                 continue
         except KeyError:
             print("skipping DRG route table: " + str(df.loc[i, 'DRG RT Name']) + " as no DRG is declared for region "+region)
@@ -170,7 +166,7 @@ def modify_terraform_drg_routerules(inputfile, outdir, service_dir,prefix=None, 
             if columnname == 'Next Hop Attachment':
                 dest_obj = columnvalue.strip()
                 if dest_obj != '':
-                    if("ocid1.drgattachment.oc1" in dest_obj):
+                    if("ocid1.drgattachment.oc" in dest_obj):
                         dest_objs = str(dest_obj).strip().split(".")
                         if(len(dest_objs)==5):
                             dest_obj = dest_obj.strip()
@@ -246,12 +242,8 @@ def modify_terraform_drg_routerules(inputfile, outdir, service_dir,prefix=None, 
             oname_rt.write(tempSkeletonDRGRouteRule[reg])
             oname_rt.close()
 # Execution of the code begins here for route rule modification
-def modify_terraform_routerules(inputfile, outdir, service_dir,prefix=None, non_gf_tenancy=False, config=DEFAULT_LOCATION):
+def modify_terraform_routerules(inputfile, outdir, service_dir,prefix, ct, non_gf_tenancy):
     filename = inputfile
-    configFileName = config
-
-    ct = commonTools()
-    ct.get_subscribedregions(configFileName)
 
     #Load the template file
     file_loader = FileSystemLoader(f'{Path(__file__).parent}/templates')
@@ -368,13 +360,14 @@ def modify_terraform_routerules(inputfile, outdir, service_dir,prefix=None, non_
         # Process only those VCNs which are present in cd3(and have been created via TF)
         vcn_name=str(df.loc[i, 'VCN Name']).strip()
         check = vcn_name, region
+        rtname = str(df.loc[i, 'Route Table Name']).strip()
         if (check not in vcns.vcn_names):
-            print("skipping route table: " + str(df.loc[i, 'Route Table Name']) + " as its VCN is not part of VCNs tab in cd3")
+            print("skipping route table: " + rtname + " as its VCN is not part of VCNs tab in cd3")
             continue
 
         tempStr.update({'count': 1})
-        if ('Default Route Table for' in str(df.loc[i,'Route Table Name']).strip()):
-            if ('Default Route Table for' + str(df.loc[i, 'Region']).lower() not in region_included):
+        if ('Default Route Table for' in rtname):
+            if ('Default Route Table for' + region not in region_included):
                 tempStr.update({'count': 0})
                 region_included.append('Default Route Table for' + str(df.loc[i, 'Region']).lower())
         elif region not in region_included:
@@ -387,6 +380,14 @@ def modify_terraform_routerules(inputfile, outdir, service_dir,prefix=None, non_
                 default_rt_tempSkeleton[region] = defaultrt.render(tempStr, skeleton=True, region=region)
             elif ('Default Route Table for' not in str(df.loc[i,'Route Table Name']).strip()):
                 tempSkeleton[region] = routetable.render(tempStr, skeleton=True, region=region)
+
+
+
+        res_igw = any(rtname in sublist for sublist in vcns.vcn_igws.values())
+        res_ngw = any(rtname in sublist for sublist in vcns.vcn_ngws.values())
+        res_sgw = any(rtname in sublist for sublist in vcns.vcn_sgws.values())
+
+        gateway_rt = res_igw or res_ngw or res_sgw
 
         for columnname in dfcolumns:
 
@@ -485,6 +486,7 @@ def modify_terraform_routerules(inputfile, outdir, service_dir,prefix=None, non_
             tempStr.update(tempdict)
 
             region_rt_name = "#"+region.lower()+"_"+rt_tf_name+"#"
+
             tempdict = { 'region_rt_name' : region_rt_name }
             tempStr.update(tempdict)
 
@@ -492,6 +494,13 @@ def modify_terraform_routerules(inputfile, outdir, service_dir,prefix=None, non_
             deftfStr[region] = generate_route_table_string(region_rt_name=region_rt_name,region=region, routetableStr=deftfStr,tempStr=tempStr,common_rt=common_rt)
         elif ('Default Route Table for' not in display_name.strip()):
             tfStr[region] = generate_route_table_string(region_rt_name=region_rt_name,region=region, routetableStr=tfStr,tempStr=tempStr,common_rt=common_rt)
+
+        if gateway_rt:
+            ss = "### gateway_route_table for " + region_rt_name + " ##"
+            rr = "gateway_route_table = true"
+            tfStr[region] = tfStr[region].replace(ss, rr)
+            deftfStr[region] = deftfStr[region].replace(ss, rr)
+
 
     for reg in ct.all_regions:
 

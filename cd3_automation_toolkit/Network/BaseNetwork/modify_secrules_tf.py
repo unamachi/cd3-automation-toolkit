@@ -18,7 +18,7 @@ from jinja2 import Environment, FileSystemLoader
 sys.path.append(os.getcwd() + "/../../..")
 from commonTools import *
 # Execution of the code begins here
-def modify_terraform_secrules(inputfile, outdir, service_dir,prefix=None, non_gf_tenancy=False, config=DEFAULT_LOCATION):
+def modify_terraform_secrules(inputfile, outdir, service_dir,prefix, ct, non_gf_tenancy):
 
     # Load the template file
     file_loader = FileSystemLoader(f'{Path(__file__).parent}/templates')
@@ -28,10 +28,6 @@ def modify_terraform_secrules(inputfile, outdir, service_dir,prefix=None, non_gf
     seclist = env.get_template('seclist-template')
 
     secrulesfilename = inputfile
-    configFileName = config
-
-    ct = commonTools()
-    ct.get_subscribedregions(configFileName)
 
     seclists_done = {}
     default_ruleStr = {}
@@ -86,7 +82,7 @@ def modify_terraform_secrules(inputfile, outdir, service_dir,prefix=None, non_gf
         commonTools.backup_file(outdir + "/" + reg + "/" + service_dir, resource, prefix + default_auto_tfvars_filename)
 
     with open('out.csv') as secrulesfile:
-        reader = csv.DictReader(ct.skipCommentedLine(secrulesfile))
+        reader = csv.DictReader(secrulesfile)
         ingress_rule = ''
         egress_rule = ''
         processed_seclist = []
@@ -164,7 +160,8 @@ def modify_terraform_secrules(inputfile, outdir, service_dir,prefix=None, non_gf
                 columnvalue = commonTools.check_columnvalue(columnvalue)
 
                 # Check for multivalued columns
-                tempdict = commonTools.check_multivalues_columnvalue(columnvalue, columnname, tempdict)
+                if columnname.lower() not in ["source", "destination"]: # this is to support IPv6 CIDRs as it contains "::"
+                    tempdict = commonTools.check_multivalues_columnvalue(columnvalue, columnname, tempdict)
 
                 # Process Defined and Freeform Tags
                 if columnname.lower() in commonTools.tagColumns:

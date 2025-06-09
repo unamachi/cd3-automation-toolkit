@@ -1,5 +1,6 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
-
+# Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+#
 ################################
 ## Resource Block - Object Storage
 ## Create Object Storage
@@ -16,7 +17,7 @@ resource "oci_objectstorage_bucket" "bucket" {
   auto_tiering  = var.auto_tiering
   freeform_tags = var.freeform_tags
   defined_tags  = var.defined_tags
-  #kms_key_id            = var.kms_key_id
+  kms_key_id            = var.kms_key_id
   #metadata              = var.metadata
   object_events_enabled = var.object_events_enabled
   storage_tier          = var.storage_tier
