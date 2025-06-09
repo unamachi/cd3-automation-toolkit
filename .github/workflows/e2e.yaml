@@ -89,14 +89,14 @@ jobs:
               instance_ocpus: 2,
               instance_ram: 8,
               boot_volume_size: 50,
-              instance_ad: "AD-1",
-              instance_fd: "FD-1",
+              instance_ad: "wdWU-PHX-AD-1",
+              instance_fd: "FAULT-DOMAIN-1",
               ssh_public_key: $ssh_public_key,
               vcn_strategy: "Use Existing VCN",
               vcn_compartment_ocid: $vcn_compartment_ocid,
               existing_vcn_id: $existing_vcn_id,
               existing_subnet_id: $existing_subnet_id,
-              assign_publicip_existing_subnet: false,
+              assign_publicip_existing_subnet: true,
               assign_existing_nsg: false,
               existing_nsg_id: "",
               vcn_name: "",
@@ -106,7 +106,7 @@ jobs:
               subnet_cidr: "",
               subnet_dns_label: "",
               subnet_type: "",
-              assign_public_ip: false,
+              assign_public_ip: true,
               drg_attachment: false,
               existing_drg_id: "",
               source_cidr: $source_cidr
@@ -133,6 +133,24 @@ jobs:
           # Download the zip file locally
           git clone https://github.com/oracle-devrel/cd3-automation-toolkit.git
           cd cd3-automation-toolkit/OCIWorkVMStack
+          echo "🔧 Patching provider.tf..."
+          # Overwrite provider.tf to use InstancePrincipal (safe in RM)
+          cat > provider.tf <<EOF
+          provider "oci" {
+            auth = "InstancePrincipal"
+            region = var.region
+          }
+          EOF
+          
+          echo "🔧 Removing tenancy/current_user variables from variables.tf if present..."
+          # Remove tenancy_ocid, current_user_ocid blocks
+          sed -i '/variable "tenancy_ocid"/,/}/d' variables.tf || true
+          sed -i '/variable "current_user_ocid"/,/}/d' variables.tf || true
+      
+          # Make region optional (to silence errors if not needed)
+          sed -i '/variable "region"/,/}/c\
+          variable "region" {\n  description = "Region"\n  type = string\n  default = null\n}' variables.tf || true
+          echo "✅ Patch completed."
           zip -r ../../../cd3_stack.zip .
           cd ../../../
 
