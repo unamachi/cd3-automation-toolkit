@@ -181,7 +181,7 @@ jobs:
         env:
           OCI_REGION: "us-phoenix-1"
         run: |
-          COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' variables.json)
+          COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' $GITHUB_WORKSPACE/variables.json)
           STACK_ID=$(oci resource-manager stack list --compartment-id "$COMPARTMENT_OCID" --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" --region "$OCI_REGION" --query "data[0].id" --raw-output)
 
           if [ -z "$STACK_ID" ]; then
