@@ -125,7 +125,10 @@ jobs:
         run: |
           set -e
           # Download the zip file locally
-            curl -L "$ZIP_URL" -o cd3_stack.zip
+          git clone https://github.com/oracle-devrel/cd3-automation-toolkit.git
+          cd cd3-automation-toolkit/OCIWorkVMStack
+          zip -r ../../../cd3_stack.zip .
+          cd ../../../
 
       
           COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' variables.json)
