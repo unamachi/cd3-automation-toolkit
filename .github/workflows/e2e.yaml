@@ -137,7 +137,7 @@ jobs:
           cd ../../../
 
       
-          COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' variables.json)
+          COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' $GITHUB_WORKSPACE/variables.json)
           # echo "Using COMPARTMENT_OCID: $COMPARTMENT_OCID"
           # echo "Using ZIP_URL: $ZIP_URL"
       
@@ -146,7 +146,7 @@ jobs:
             --auth instance_principal \
             --compartment-id "$COMPARTMENT_OCID" \
             --config-source cd3_stack.zip \
-            --variables file://variables.json \
+            --variables file://$GITHUB_WORKSPACE/variables.json \
             --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" \
             --description "Automated CD3 WorkVM Stack for ${{ github.ref_name }}" \
             --region "$OCI_REGION" \
@@ -170,7 +170,7 @@ jobs:
               --auth instance_principal \
               --stack-id "$EXISTING_STACK_ID" \
               --config-source cd3_stack.zip \
-              --variables file://variables.json \
+              --variables file://$GITHUB_WORKSPACE/variables.json \
               --region "$OCI_REGION" \
               --query "data.id" --raw-output)
           fi
