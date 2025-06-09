@@ -176,7 +176,7 @@ jobs:
           fi
       
           echo "✅ STACK_ID: $STACK_ID"
-          echo "$STACK_ID" > stack_id.txt
+          echo "$STACK_ID" > "$GITHUB_WORKSPACE/stack_id.txt"
 
       - name: Apply Resource Manager stack
         env:
@@ -190,7 +190,7 @@ jobs:
           #   exit 1
           # fi
 
-          STACK_ID=$(cat stack_id.txt)
+          STACK_ID=$(cat "$GITHUB_WORKSPACE/stack_id.txt")
           echo "Applying Resource Manager stack $STACK_ID in region $OCI_REGION"
           oci resource-manager job create-apply-job \
             --auth instance_principal  \
@@ -203,7 +203,7 @@ jobs:
         run: |
           rm -f variables.json
           rm -f cd3_stack.zip
-          rm -rf stack_id.txt
+          rm -rf "$GITHUB_WORKSPACE/stack_id.txt"
 
       - name: Say hello
         run: echo "✅ Self-hosted runner is working!"
