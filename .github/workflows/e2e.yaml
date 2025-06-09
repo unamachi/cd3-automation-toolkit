@@ -33,6 +33,12 @@ jobs:
             export PATH=$HOME/bin:$PATH
           fi
 
+      - name: Install git
+        run: |
+          if ! command -v git &> /dev/null; then
+            sudo yum install -y git || sudo apt-get update && sudo apt-get install -y git
+          fi
+
       - name: Retrieve secret contents from OCI Vault
         env:
           COMPARTMENT_SECRET_OCID: ${{ secrets.COMPARTMENT_SECRET_OCID }}
