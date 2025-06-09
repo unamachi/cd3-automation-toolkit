@@ -48,7 +48,13 @@ jobs:
           SSH_KEY_SECRET_OCID: ${{ secrets.SSH_KEY_SECRET_OCID }}
           OCI_REGION: us-phoenix-1
         run: |
-          TENANCY_OCID=$(oci iam principal get --query "data.tenancyId" --raw-output --auth instance_principal)
+          TENANCY_OCID=$(oci iam compartment list \
+                          --all \
+                          --compartment-id-in-subtree true \
+                          --access-level ACCESSIBLE \
+                          --include-root \
+                          --raw-output \
+                          --query "data[?contains(\"id\",'tenancy')].id | [0] --auth instance_principal)
           # USER_OCID=$(oci iam user list --query 'data[0].id' --raw-output --auth instance_principal)
           
           # Verify secret OCIDs
