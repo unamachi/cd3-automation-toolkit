@@ -149,6 +149,7 @@ jobs:
             --variables file://$GITHUB_WORKSPACE/variables.json \
             --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" \
             --description "Automated CD3 WorkVM Stack for ${{ github.ref_name }}" \
+            --terraform-version "1.2.x" \
             --region "$OCI_REGION" \
             --query "data.id" --raw-output) 2>/dev/null || true
       
@@ -171,6 +172,7 @@ jobs:
               --stack-id "$EXISTING_STACK_ID" \
               --config-source cd3_stack.zip \
               --variables file://$GITHUB_WORKSPACE/variables.json \
+              --terraform-version "1.2.x" \
               --region "$OCI_REGION" \
               --query "data.id" --raw-output)
           fi
