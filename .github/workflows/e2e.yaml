@@ -51,7 +51,7 @@ jobs:
           OCI_REGION: us-phoenix-1
         run: |
           # Verify secret OCIDs
-          for OCID in "$TENANCY_SECRET_OCID" $USER_SECRET_OCID" "$COMPARTMENT_SECRET_OCID" "$VCN_COMPARTMENT_SECRET_OCID" "$VCN_ID_SECRET_OCID" "$SUBNET_ID_SECRET_OCID" "$SSH_KEY_SECRET_OCID"; do
+          for OCID in "$TENANCY_SECRET_OCID" "$USER_SECRET_OCID" "$COMPARTMENT_SECRET_OCID" "$VCN_COMPARTMENT_SECRET_OCID" "$VCN_ID_SECRET_OCID" "$SUBNET_ID_SECRET_OCID" "$SSH_KEY_SECRET_OCID"; do
             if [ -z "$OCID" ]; then
               echo "Error: One or more secret OCIDs not set in GitHub Secrets"
               exit 1
