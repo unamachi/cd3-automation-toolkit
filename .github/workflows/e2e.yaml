@@ -41,6 +41,8 @@ jobs:
 
       - name: Retrieve secret contents from OCI Vault
         env:
+          TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
+          USER_SECRET_OCID: ${{ secrets.USER_SECRET_OCID }}
           COMPARTMENT_SECRET_OCID: ${{ secrets.COMPARTMENT_SECRET_OCID }}
           VCN_COMPARTMENT_SECRET_OCID: ${{ secrets.VCN_COMPARTMENT_SECRET_OCID }}
           VCN_ID_SECRET_OCID: ${{ secrets.VCN_ID_SECRET_OCID }}
@@ -48,11 +50,8 @@ jobs:
           SSH_KEY_SECRET_OCID: ${{ secrets.SSH_KEY_SECRET_OCID }}
           OCI_REGION: us-phoenix-1
         run: |
-          TENANCY_OCID=$( oci iam compartment list --all --raw-output --query "data[?contains(\"compartment-id\",'.tenancy.')].\"compartment-id\" | [0]"  --auth instance_principal)
-          # USER_OCID=$(oci iam user list --query 'data[0].id' --raw-output --auth instance_principal)
-          
           # Verify secret OCIDs
-          for OCID in "$COMPARTMENT_SECRET_OCID" "$VCN_COMPARTMENT_SECRET_OCID" "$VCN_ID_SECRET_OCID" "$SUBNET_ID_SECRET_OCID" "$SSH_KEY_SECRET_OCID"; do
+          for OCID in "$TENANCY_SECRET_OCID" $USER_SECRET_OCID" "$COMPARTMENT_SECRET_OCID" "$VCN_COMPARTMENT_SECRET_OCID" "$VCN_ID_SECRET_OCID" "$SUBNET_ID_SECRET_OCID" "$SSH_KEY_SECRET_OCID"; do
             if [ -z "$OCID" ]; then
               echo "Error: One or more secret OCIDs not set in GitHub Secrets"
               exit 1
@@ -60,6 +59,8 @@ jobs:
           done
 
           # Fetch secret contents
+          TENANCY_OCID=$(oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+          USER_OCID=$(oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
           COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
           VCN_COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$VCN_COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
           EXISTING_VCN_ID=$(oci secrets secret-bundle get --secret-id "$VCN_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
