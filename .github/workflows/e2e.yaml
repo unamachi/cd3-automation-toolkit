@@ -83,6 +83,7 @@ jobs:
             --arg existing_subnet_id "$EXISTING_SUBNET_ID" \
             --arg ssh_public_key "$SSH_PUBLIC_KEY" \
             --arg tenancy_ocid "$TENANCY_OCID" \
+            --arg current_user_ocid "$USER_OCID" \
             --arg region "$OCI_REGION" \
             --arg source_cidr '["10.0.0.0/24"]' \
             '{
