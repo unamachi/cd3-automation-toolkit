@@ -100,7 +100,7 @@ jobs:
               instance_ocpus: 2,
               instance_ram: 8,
               boot_volume_size: 50,
-              instance_ad: "wdWU-PHX-AD-1",
+              instance_ad: "wdWU:PHX-AD-1",
               instance_fd: "FAULT-DOMAIN-1",
               ssh_public_key: $ssh_public_key,
               vcn_strategy: "Use Existing VCN",
