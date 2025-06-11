@@ -211,33 +211,6 @@ jobs:
             --execution-plan-strategy AUTO_APPROVED \
             --region "$OCI_REGION"
 
-      - name: Create Bastion
-        id: create_bastion
-        shell: bash
-        env:
-          COMPARTMENT_SECRET_OCID: ${{ secrets.COMPARTMENT_SECRET_OCID }}
-          SUBNET_SECRET_OCID: ${{ secrets.SUBNET_SECRET_OCID }}
-          OCI_REGION: "us-phoenix-1"
-        run: |
-          echo "Creating Bastion in compartment..."
-
-          COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-          SUBNET_OCID=$(oci secrets secret-bundle get --secret-id "$SUBNET_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-         
-          BASTION_ID=$(oci bastion bastion create \
-            --name "gh-bastion-${{ github.run_id }}" \
-            --compartment-id "$COMPARTMENT_OCID" \
-            --target-subnet-id "$SUBNET_OCID" \
-            --auth instance_principal \
-            --client-cidr-block-allow-list '["0.0.0.0/0"]' \
-            --region "$OCI_REGION" \
-            --query "data.id" \
-            --raw-output)
-
-          echo "bastion_id=$BASTION_ID" >> $GITHUB_OUTPUT
-          echo "✅ Bastion created with ID: $BASTION_ID"
-
-
       - name: Clean up sensitive files
         if: always()
         run: |
