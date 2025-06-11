@@ -250,7 +250,7 @@ jobs:
       - name: Wait for Instance to be Ready
         run: |
           INSTANCE_OCID=${{ needs.Deploy_RM_Stack.outputs.instance_ocid }}
-          for attempt in {1..3}; do
+          for attempt in {1..5}; do
             echo "Checking instance status (attempt $attempt/3)..."
             STATUS=$(oci compute instance get \
               --instance-id "$INSTANCE_OCID" \
