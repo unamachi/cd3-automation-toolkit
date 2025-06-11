@@ -158,8 +158,8 @@ jobs:
             --compartment-id "$COMPARTMENT_OCID" \
             --config-source cd3_stack.zip \
             --variables file://$GITHUB_WORKSPACE/variables.json \
-            --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" \
-            --description "Automated CD3 WorkVM Stack for ${{ github.ref_name }}" \
+            --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}-${{ github.run_id }}" \
+            --description "Automated CD3 WorkVM Stack for ${{ github.ref_name }}-{{ github.run_id }}" \
             --terraform-version "1.2.x" \
             --region "$OCI_REGION" \
             --query "data.id" --raw-output) 2>/dev/null || true
@@ -168,7 +168,7 @@ jobs:
             echo "Stack creation failed or already exists. Attempting to find and update existing stack..."
             EXISTING_STACK_ID=$(oci resource-manager stack list \
               --compartment-id "$COMPARTMENT_OCID" \
-              --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" \
+              --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}-{{ github.run_id }}" \
               --region "$OCI_REGION" \
               --query "data[0].id" --raw-output)
       
@@ -196,7 +196,7 @@ jobs:
           OCI_REGION: "us-phoenix-1"
         run: |
           # COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' $GITHUB_WORKSPACE/variables.json)
-          # STACK_ID=$(oci resource-manager stack list --compartment-id "$COMPARTMENT_OCID" --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}" --region "$OCI_REGION" --query "data[0].id" --raw-output)
+          # STACK_ID=$(oci resource-manager stack list --compartment-id "$COMPARTMENT_OCID" --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}-${{ github.run_id }}" --region "$OCI_REGION" --query "data[0].id" --raw-output)
 
           # if [ -z "$STACK_ID" ]; then
           #   echo "Error: Stack ID not found for applying"
@@ -215,12 +215,15 @@ jobs:
         id: create_bastion
         shell: bash
         env:
-          COMPARTMENT_OCID: ${{ secrets.COMPARTMENT_OCID }}
-          SUBNET_OCID: ${{ secrets.SUBNET_OCID }}
+          COMPARTMENT_SECRET_OCID: ${{ secrets.COMPARTMENT_SECRET_OCID }}
+          SUBNET_SECRET_OCID: ${{ secrets.SUBNET_SECRET_OCID }}
           OCI_REGION: "us-phoenix-1"
         run: |
           echo "Creating Bastion in compartment $COMPARTMENT_OCID and subnet $SUBNET_OCID..."
-      
+
+          COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+          SUBNET_OCID=$(oci secrets secret-bundle get --secret-id "$SUBNET_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+         
           BASTION_ID=$(oci bastion bastion create \
             --name "gh-bastion-${{ github.run_id }}" \
             --compartment-id "$COMPARTMENT_OCID" \
