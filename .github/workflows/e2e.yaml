@@ -189,16 +189,55 @@ jobs:
           echo "stack_id=$STACK_ID" >> $GITHUB_OUTPUT
 
       - name: Apply Resource Manager Stack
+        id: apply-stack
         env:
           OCI_REGION: us-phoenix-1
         run: |
+          set -e
           STACK_ID=${{ steps.create-stack.outputs.stack_id }}
           echo "Applying Resource Manager stack $STACK_ID in region $OCI_REGION"
-          oci resource-manager job create-apply-job \
+          JOB_ID=$(oci resource-manager job create-apply-job \
             --auth instance_principal \
             --stack-id "$STACK_ID" \
             --execution-plan-strategy AUTO_APPROVED \
-            --region "$OCI_REGION"
+            --region "$OCI_REGION" \
+            --query "data.id" --raw-output)
+
+          if [ -z "$JOB_ID" ]; then
+            echo "❌ Error: Failed to create apply job"
+            exit 1
+          fi
+
+          echo "Waiting for apply job $JOB_ID to complete..."
+          for attempt in {1..10}; do
+            JOB_STATUS=$(oci resource-manager job get \
+              --job-id "$JOB_ID" \
+              --auth instance_principal \
+              --region "$OCI_REGION" \
+              --query "data.\"lifecycle-state\"" \
+              --raw-output)
+            echo "Apply job status (attempt $attempt/10): $JOB_STATUS"
+            if [ "$JOB_STATUS" = "SUCCEEDED" ]; then
+              echo "✅ Stack apply job completed successfully"
+              break
+            elif [ "$JOB_STATUS" = "FAILED" ]; then
+              echo "❌ Stack apply job failed"
+              JOB_DETAILS=$(oci resource-manager job get \
+                --job-id "$JOB_ID" \
+                --auth instance_principal \
+                --region "$OCI_REGION" \
+                --query "data.\"job-operation-details\"" \
+                --raw-output)
+              echo "Job details: $JOB_DETAILS"
+              exit 1
+            fi
+            if [ $attempt -eq 10 ]; then
+              echo "❌ Stack apply job did not complete after 10 attempts"
+              exit 1
+            fi
+            echo "Waiting 30 seconds before next check..."
+            sleep 30
+          done
 
       - name: Get Instance OCID
         id: get-instance-ocid
