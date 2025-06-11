@@ -262,8 +262,8 @@ jobs:
               echo "✅ Instance is running"
               break
             fi
-            if [ $attempt -eq 3 ]; then
-              echo "❌ Instance not running after 3 attempts"
+            if [ $attempt -eq 5 ]; then
+              echo "❌ Instance not running after 5 attempts"
               exit 1
             fi
             echo "Instance not ready, waiting 5 minutes..."
