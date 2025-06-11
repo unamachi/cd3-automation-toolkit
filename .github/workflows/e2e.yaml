@@ -49,9 +49,8 @@ jobs:
           echo "TEMP_SSH_PUBLIC_KEY=$(cat temp-ssh-key.pub)" >> $GITHUB_ENV
           # Save private key as artifact (base64 encoded)
           base64 -w0 temp-ssh-key > temp-ssh-key.txt
-          # Mask sensitive values
+          # Mask public key to prevent logging
           echo "::add-mask::$(cat temp-ssh-key.pub)" >> $GITHUB_OUTPUT
-          echo "::add-mask::$(base64 -w0 temp-ssh-key)" >> $GITHUB_OUTPUT
 
       - name: Upload SSH Private Key Artifact
         uses: actions/upload-artifact@v4
