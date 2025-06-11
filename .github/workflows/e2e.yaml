@@ -93,7 +93,7 @@ jobs:
             fi
           done
 
-          # Generate variables.json with temporary SSH public key
+          # Generate variables.json with temporary SSH public key and unique instance name
           jq -n \
             --arg instance_compartment_ocid "$COMPARTMENT_OCID" \
             --arg vcn_compartment_ocid "$VCN_COMPARTMENT_OCID" \
@@ -104,6 +104,7 @@ jobs:
             --arg user_ocid "$USER_OCID" \
             --arg region "$OCI_REGION" \
             --arg source_cidr '["10.0.0.0/24"]' \
+            --arg instance_name "workvm-${{ github.run_id }}" \
             '{
               instance_compartment_strategy: "Use Existing Compartment",
               tenancy_ocid: $tenancy_ocid,
@@ -112,7 +113,7 @@ jobs:
               instance_compartment_ocid: $instance_compartment_ocid,
               parent_compartment_ocid: "",
               new_compartment_name: "",
-              instance_name: "workvm",
+              instance_name: $instance_name,
               instance_os_version: "Oracle-Linux-9",
               instance_shape: "VM.Standard3.Flex",
               instance_ocpus: 2,
@@ -209,10 +210,10 @@ jobs:
             --compartment-id "$COMPARTMENT_OCID" \
             --region "$OCI_REGION" \
             --auth instance_principal \
-            --query "data[?\"display-name\"=='workvm'] | [0].id" \
+            --query "data[?\"display-name\"=='workvm-${{ github.run_id }}'] | [0].id" \
             --raw-output)
           if [ -z "$INSTANCE_OCID" ]; then
-            echo "❌ Instance 'workvm' not found."
+            echo "❌ Instance 'workvm-${{ github.run_id }}' not found."
             exit 1
           fi
           echo "instance_ocid=$INSTANCE_OCID" >> $GITHUB_OUTPUT
@@ -233,7 +234,7 @@ jobs:
     needs: Deploy_RM_Stack
     env:
       OCI_REGION: us-phoenix-1
-      INSTANCE_NAME: workvm
+      INSTANCE_NAME: workvm-${{ github.run_id }}
     steps:
       - name: Download SSH Private Key Artifact
         uses: actions/download-artifact@v4
@@ -251,7 +252,7 @@ jobs:
         run: |
           INSTANCE_OCID=${{ needs.Deploy_RM_Stack.outputs.instance_ocid }}
           for attempt in {1..5}; do
-            echo "Checking instance status (attempt $attempt/3)..."
+            echo "Checking instance status (attempt $attempt/5)..."
             STATUS=$(oci compute instance get \
               --instance-id "$INSTANCE_OCID" \
               --auth instance_principal \
