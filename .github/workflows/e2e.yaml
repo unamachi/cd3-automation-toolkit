@@ -219,7 +219,7 @@ jobs:
           SUBNET_SECRET_OCID: ${{ secrets.SUBNET_SECRET_OCID }}
           OCI_REGION: "us-phoenix-1"
         run: |
-          echo "Creating Bastion in compartment $COMPARTMENT_OCID and subnet $SUBNET_OCID..."
+          echo "Creating Bastion in compartment..."
 
           COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
           SUBNET_OCID=$(oci secrets secret-bundle get --secret-id "$SUBNET_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
