@@ -44,12 +44,14 @@ jobs:
 
       - name: Generate Temporary SSH Key Pair
         run: |
-          ssh-keygen -t rsa -b 4096 -f temp-ssh-key -N "" -C "temp-key-for-oci"
+          ssh-keygen -t rsa -b 4096 -f temp-ssh-key -N "" -C "temp-key-for-oci" > /dev/null 2>&1
+          # Store public key in environment variable
           echo "TEMP_SSH_PUBLIC_KEY=$(cat temp-ssh-key.pub)" >> $GITHUB_ENV
-          # Base64 encode the private key to handle newlines
-          echo "TEMP_SSH_PRIVATE_KEY=$(base64 -w0 temp-ssh-key)" >> $GITHUB_ENV
-          # Save private key as artifact
-          echo "TEMP_SSH_PRIVATE_KEY=$(base64 -w0 temp-ssh-key)" > temp-ssh-key.txt
+          # Save private key as artifact (base64 encoded)
+          base64 -w0 temp-ssh-key > temp-ssh-key.txt
+          # Mask sensitive values
+          echo "::add-mask::$(cat temp-ssh-key.pub)" >> $GITHUB_OUTPUT
+          echo "::add-mask::$(base64 -w0 temp-ssh-key)" >> $GITHUB_OUTPUT
 
       - name: Upload SSH Private Key Artifact
         uses: actions/upload-artifact@v4
@@ -149,8 +151,31 @@ jobs:
             echo "ZIP_URL=https://github.com/oracle-devrel/cd3-automation-toolkit/archive/refs/heads/testUpgrade.zip" >> $GITHUB_ENV
           else
             echo "ZIP_URL=https://github.com/oracle-devrel/cd3-automation-toolkit/archive/refs/heads/main.zip" >> $GITHUB_ENV
-           /${{ github.ref_name }}-{{ github.run_id }}" \
-            --description "Automated CD3 WorkVM Stack for ${{ github.ref_name }}-{{ github.run_id }}" \
+            echo "⚠️ Warning: Defaulting ZIP_URL to main.zip as fallback."
+          fi
+
+      - name: Create Resource Manager Stack
+        id: create-stack
+        env:
+          OCI_REGION: us-phoenix-1
+        run: |
+          set -e
+          # Download the zip file locally
+          git clone https://github.com/oracle-devrel/cd3-automation-toolkit.git
+          cd cd3-automation-toolkit/OCIWorkVMStack
+          zip -r ../../../cd3_stack.zip .
+          cd ../../../
+
+          COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' $GITHUB_WORKSPACE/variables.json)
+
+          echo "Creating new stack..."
+          STACK_ID=$(oci resource-manager stack create \
+            --auth instance_principal \
+            --compartment-id "$COMPARTMENT_OCID" \
+            --config-source cd3_stack.zip \
+            --variables file://$GITHUB_WORKSPACE/variables.json \
+            --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}-${{ github.run_id }}" \
+            --description "Automated CD3 WorkVM Stack for ${{ github.ref_name }}-${{ github.run_id }}" \
             --terraform-version "1.2.x" \
             --region "$OCI_REGION" \
             --query "data.id" --raw-output)
