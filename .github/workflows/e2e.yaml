@@ -10,6 +10,9 @@ on:
 jobs:
   Deploy_RM_Stack:
     runs-on: [self-hosted]
+    outputs:
+      stack_id: ${{ steps.create-stack.outputs.stack_id }}
+      instance_ocid: ${{ steps.get-instance-ocid.outputs.instance_ocid }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -39,6 +42,21 @@ jobs:
             sudo yum install -y git
           fi
 
+      - name: Generate Temporary SSH Key Pair
+        run: |
+          ssh-keygen -t rsa -b 4096 -f temp-ssh-key -N "" -C "temp-key-for-oci"
+          echo "TEMP_SSH_PRIVATE_KEY=$(cat temp-ssh-key)" >> $GITHUB_ENV
+          echo "TEMP_SSH_PUBLIC_KEY=$(cat temp-ssh-key.pub)" >> $GITHUB_ENV
+          # Save private key as artifact to share with setup_connection job
+          echo "TEMP_SSH_PRIVATE_KEY=$(cat temp-ssh-key)" > temp-ssh-key.txt
+
+      - name: Upload SSH Private Key Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-private-key
+          path: temp-ssh-key.txt
+          retention-days: 1
+
       - name: Retrieve secret contents from OCI Vault
         env:
           TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
@@ -47,11 +65,10 @@ jobs:
           VCN_COMPARTMENT_SECRET_OCID: ${{ secrets.VCN_COMPARTMENT_SECRET_OCID }}
           VCN_ID_SECRET_OCID: ${{ secrets.VCN_ID_SECRET_OCID }}
           SUBNET_ID_SECRET_OCID: ${{ secrets.SUBNET_ID_SECRET_OCID }}
-          SSH_KEY_SECRET_OCID: ${{ secrets.SSH_KEY_SECRET_OCID }}
           OCI_REGION: us-phoenix-1
         run: |
           # Verify secret OCIDs
-          for OCID in "$TENANCY_SECRET_OCID" "$USER_SECRET_OCID" "$COMPARTMENT_SECRET_OCID" "$VCN_COMPARTMENT_SECRET_OCID" "$VCN_ID_SECRET_OCID" "$SUBNET_ID_SECRET_OCID" "$SSH_KEY_SECRET_OCID"; do
+          for OCID in "$TENANCY_SECRET_OCID" "$USER_SECRET_OCID" "$COMPARTMENT_SECRET_OCID" "$VCN_COMPARTMENT_SECRET_OCID" "$VCN_ID_SECRET_OCID" "$SUBNET_ID_SECRET_OCID"; do
             if [ -z "$OCID" ]; then
               echo "Error: One or more secret OCIDs not set in GitHub Secrets"
               exit 1
@@ -65,23 +82,22 @@ jobs:
           VCN_COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$VCN_COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
           EXISTING_VCN_ID=$(oci secrets secret-bundle get --secret-id "$VCN_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
           EXISTING_SUBNET_ID=$(oci secrets secret-bundle get --secret-id "$SUBNET_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-          SSH_PUBLIC_KEY=$(oci secrets secret-bundle get --secret-id "$SSH_KEY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
 
           # Verify secret contents
-          for VALUE in "$COMPARTMENT_OCID" "$VCN_COMPARTMENT_OCID" "$EXISTING_VCN_ID" "$EXISTING_SUBNET_ID" "$SSH_PUBLIC_KEY"; do
+          for VALUE in "$COMPARTMENT_OCID" "$VCN_COMPARTMENT_OCID" "$EXISTING_VCN_ID" "$EXISTING_SUBNET_ID"; do
             if [ -z "$VALUE" ]; then
               echo "Error: One or more secret values are empty"
               exit 1
             fi
           done
 
-          # Generate variables.json safely using jq
+          # Generate variables.json with temporary SSH public key
           jq -n \
             --arg instance_compartment_ocid "$COMPARTMENT_OCID" \
             --arg vcn_compartment_ocid "$VCN_COMPARTMENT_OCID" \
             --arg existing_vcn_id "$EXISTING_VCN_ID" \
             --arg existing_subnet_id "$EXISTING_SUBNET_ID" \
-            --arg ssh_public_key "$SSH_PUBLIC_KEY" \
+            --arg ssh_public_key "${{ env.TEMP_SSH_PUBLIC_KEY }}" \
             --arg tenancy_ocid "$TENANCY_OCID" \
             --arg user_ocid "$USER_OCID" \
             --arg region "$OCI_REGION" \
@@ -118,11 +134,11 @@ jobs:
               subnet_dns_label: "",
               subnet_type: "",
               assign_public_ip: true,
-              drg_attachment: false,
+              dr为g_attachment: false,
               existing_drg_id: "",
               source_cidr: $source_cidr
             }' > variables.json
-  
+
       - name: Set ZIP URL
         run: |
           echo "github.ref is: ${{ github.ref }}"
@@ -135,8 +151,8 @@ jobs:
             echo "⚠️ Warning: Defaulting ZIP_URL to main.zip as fallback."
           fi
 
-
-      - name: Create or Update Resource Manager Stack
+      - name: Create Resource Manager Stack
+        id: create-stack
         env:
           OCI_REGION: us-phoenix-1
         run: |
@@ -147,12 +163,9 @@ jobs:
           zip -r ../../../cd3_stack.zip .
           cd ../../../
 
-      
           COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' $GITHUB_WORKSPACE/variables.json)
-          # echo "Using COMPARTMENT_OCID: $COMPARTMENT_OCID"
-          # echo "Using ZIP_URL: $ZIP_URL"
-      
-          echo "Attempting to create stack..."
+
+          echo "Creating new stack..."
           STACK_ID=$(oci resource-manager stack create \
             --auth instance_principal \
             --compartment-id "$COMPARTMENT_OCID" \
@@ -162,61 +175,133 @@ jobs:
             --description "Automated CD3 WorkVM Stack for ${{ github.ref_name }}-{{ github.run_id }}" \
             --terraform-version "1.2.x" \
             --region "$OCI_REGION" \
-            --query "data.id" --raw-output) 2>/dev/null || true
-      
+            --query "data.id" --raw-output)
+
           if [ -z "$STACK_ID" ]; then
-            echo "Stack creation failed or already exists. Attempting to find and update existing stack..."
-            EXISTING_STACK_ID=$(oci resource-manager stack list \
-              --compartment-id "$COMPARTMENT_OCID" \
-              --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}-{{ github.run_id }}" \
-              --region "$OCI_REGION" \
-              --query "data[0].id" --raw-output)
-      
-            if [ -z "$EXISTING_STACK_ID" ]; then
-              echo "❌ Error: No existing stack found to update"
-              exit 1
-            fi
-      
-            echo "Updating existing stack: $EXISTING_STACK_ID"
-            STACK_ID=$(oci resource-manager stack update \
-              --auth instance_principal \
-              --stack-id "$EXISTING_STACK_ID" \
-              --config-source cd3_stack.zip \
-              --variables file://$GITHUB_WORKSPACE/variables.json \
-              --terraform-version "1.2.x" \
-              --region "$OCI_REGION" \
-              --query "data.id" --raw-output)
+            echo "❌ Error: Stack creation failed"
+            exit 1
           fi
-      
+
           echo "✅ STACK_ID: $STACK_ID"
-          echo "$STACK_ID" > "$GITHUB_WORKSPACE/stack_id.txt"
+          echo "stack_id=$STACK_ID" >> $GITHUB_OUTPUT
 
-      - name: Apply Resource Manager stack
+      - name: Apply Resource Manager Stack
         env:
-          OCI_REGION: "us-phoenix-1"
+          OCI_REGION: us-phoenix-1
         run: |
-          # COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' $GITHUB_WORKSPACE/variables.json)
-          # STACK_ID=$(oci resource-manager stack list --compartment-id "$COMPARTMENT_OCID" --display-name "CD3-WorkVM-Stack-${{ github.ref_name }}-${{ github.run_id }}" --region "$OCI_REGION" --query "data[0].id" --raw-output)
-
-          # if [ -z "$STACK_ID" ]; then
-          #   echo "Error: Stack ID not found for applying"
-          #   exit 1
-          # fi
-
-          STACK_ID=$(cat "$GITHUB_WORKSPACE/stack_id.txt")
+          STACK_ID=${{ steps.create-stack.outputs.stack_id }}
           echo "Applying Resource Manager stack $STACK_ID in region $OCI_REGION"
           oci resource-manager job create-apply-job \
-            --auth instance_principal  \
+            --auth instance_principal \
             --stack-id "$STACK_ID" \
             --execution-plan-strategy AUTO_APPROVED \
             --region "$OCI_REGION"
+
+      - name: Get Instance OCID
+        id: get-instance-ocid
+        env:
+          OCI_REGION: us-phoenix-1
+        run: |
+          COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' $GITHUB_WORKSPACE/variables.json)
+          INSTANCE_OCID=$(oci compute instance list \
+            --compartment-id "$COMPARTMENT_OCID" \
+            --region "$OCI_REGION" \
+            --auth instance_principal \
+            --query "data[?\"display-name\"=='workvm'] | [0].id" \
+            --raw-output)
+          if [ -z "$INSTANCE_OCID" ]; then
+            echo "❌ Instance 'workvm' not found."
+            exit 1
+          fi
+          echo "instance_ocid=$INSTANCE_OCID" >> $GITHUB_OUTPUT
 
       - name: Clean up sensitive files
         if: always()
         run: |
           rm -f variables.json
           rm -f cd3_stack.zip
+          rm -f temp-ssh-key temp-ssh-key.pub temp-ssh-key.txt
           rm -rf "$GITHUB_WORKSPACE/stack_id.txt"
 
       - name: Say hello
         run: echo "✅ Self-hosted runner is working!"
+
+  setup_connection:
+    runs-on: self-hosted
+    needs: Deploy_RM_Stack
+    env:
+      OCI_REGION: us-phoenix-1
+      INSTANCE_NAME: workvm
+    steps:
+      - name: Download SSH Private Key Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ssh-private-key
+          path: .
+
+      - name: Configure SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          mv temp-ssh-key.txt ~/.ssh/temp-id_rsa
+          chmod 600 ~/.ssh/temp-id_rsa
+
+      - name: Wait for Instance to be Ready
+        run: |
+          INSTANCE_OCID=${{ needs.Deploy_RM_Stack.outputs.instance_ocid }}
+          for attempt in {1..3}; do
+            echo "Checking instance status (attempt $attempt/3)..."
+            STATUS=$(oci compute instance get \
+              --instance-id "$INSTANCE_OCID" \
+              --auth instance_principal \
+              --region "$OCI_REGION" \
+              --query "data.\"lifecycle-state\"" \
+              --raw-output)
+            if [ "$STATUS" = "RUNNING" ]; then
+              echo "✅ Instance is running"
+              break
+            fi
+            if [ $attempt -eq 3 ]; then
+              echo "❌ Instance not running after 3 attempts"
+              exit 1
+            fi
+            echo "Instance not ready, waiting 5 minutes..."
+            sleep 300
+          done
+
+      - name: Get Instance Private IP
+        id: get-ip
+        run: |
+          INSTANCE_OCID=${{ needs.Deploy_RM_Stack.outputs.instance_ocid }}
+          IP=$(oci compute instance list-vnics \
+            --instance-id "$INSTANCE_OCID" \
+            --auth instance_principal \
+            --region "$OCI_REGION" \
+            --query "data[0].\"private-ip\"" \
+            --raw-output)
+          if [ -z "$IP" ]; then
+            echo "❌ Failed to retrieve private IP for instance."
+            exit 1
+          fi
+          echo "INSTANCE_IP=$IP" >> $GITHUB_ENV
+          echo "✅ Found private IP: $IP"
+
+      - name: Test SSH Connection
+        run: |
+          ssh-keyscan -H ${{ env.INSTANCE_IP }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 opc@${{ env.INSTANCE_IP }} exit 2>/dev/null; then
+            echo "✅ SSH connection okay"
+          else
+            echo "❌ SSH connection failed"
+            exit 1
+          fi
+
+      - name: Placeholder for System Tasks
+        run: |
+          echo "SSH connection established. Ready for system tasks."
+          # Add system tasks here once SSH is verified
+
+      - name: Cleanup SSH Key
+        if: always()
+        run: |
+          rm -f ~/.ssh/temp-id_rsa
+          echo "✅ Temporary SSH keys deleted"
