@@ -11,8 +11,6 @@ jobs:
   Deploy_RM_Stack:
     runs-on: [self-hosted]
     outputs:
-      stack Credo que estás buscando?
-
       stack_id: ${{ steps.create-stack.outputs.stack_id }}
       instance_ocid: ${{ steps.get-instance-ocid.outputs.instance_ocid }}
     steps:
