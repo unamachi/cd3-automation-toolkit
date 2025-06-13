@@ -306,8 +306,8 @@ jobs:
           echo "Found private IP."
       - name: Test SSH Connection
         run: |
-          ssh-keyscan -H ${{ envs.INSTANCE_IP}} >> ~/.ssh/known_hosts 2>/dev/null || true
-          if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 opc@${{ envs.INSTANCE_IP}} exit 2>/dev/null; then
+          ssh-keyscan -H ${{ env.INSTANCE_IP }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 opc@${{ env.INSTANCE_IP }} exit 2>/dev/null; then
             echo "SSH connection okay"
           else
             echo "Error: SSH connection failed"
@@ -315,13 +315,13 @@ jobs:
           fi
       - name: Setup CD3 Automation Toolkit
         env:
-          CD3_TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
-          CD3_USER_SECRET_OCID: ${{ secrets.USER_SECRET_OCID }}
-          CD3_FINGERPRINT_SECRET_OCID: ${{ secrets.FINGERPRINT_SECRET_OCID }}
-          CD3_API_KEY_SECRET_OCID: ${{ secrets.API_SECRET_OCID }}
+          CD3_TENANCY_SECRET_OCID: ${{ secrets.CD3_TENANCY_SECRET_OCID }}
+          CD3_USER_SECRET_OCID: ${{ secrets.CD3_USER_SECRET_OCID }}
+          CD3_FINGERPRINT_SECRET_OCID: ${{ secrets.CD3_FINGERPRINT_SECRET_OCID }}
+          CD3_API_KEY_SECRET_OCID: ${{ secrets.CD3_API_KEY_SECRET_OCID }}
         run: |
           set -e
-          LOG_FILE="/tmp/cd3_setup_$(date +%F_%H-%M-%S).log
+          LOG_FILE="/tmp/cd3_setup_$(date +%F_%H-%M-%S).log"
           # Mask sensitive values to prevent logging
           echo "::add-mask::$CD3_TENANCY_SECRET_OCID"
           echo "::add-mask::$CD3_USER_SECRET_OCID"
@@ -379,24 +379,24 @@ jobs:
           EOF
           chmod 600 /tmp/tenancyconfig.properties
           # Check for running CD3 container
-          container_check=$(ssh -i ~/.ssh/temp-id_rsa opc@${{ envs.INSTANCE_IP}} "podman ps | grep $CONTAINER_NAME" 2>> "$LOG_FILE")
+          container_check=$(ssh -i ~/.ssh/temp-id_rsa opc@${{ env.INSTANCE_IP }} "podman ps | grep $CONTAINER_NAME" 2>> "$LOG_FILE")
           if [ -z "$container_check" ]; then
-            echo "Error: Container '$CONTAINER_NAME' not found or not running on ${{ envs.INSTANCE_IP}}" | tee -a "$LOG_FILE"
+            echo "Error: Container '$CONTAINER_NAME' not found or not running on ${{ env.INSTANCE_IP }}" | tee -a "$LOG_FILE"
             exit 1
           fi
-          CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa opc@${{ envs.INSTANCE_IP}} "podman ps -q -f name=$CONTAINER_NAME" 2>> "$LOG_FILE")
+          CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa opc@${{ env.INSTANCE_IP }} "podman ps -q -f name=$CONTAINER_NAME" 2>> "$LOG_FILE")
           echo "Found container ID" | tee -a "$LOG_FILE"
           # Copy API private key to container
-          scp -i ~/.ssh/temp-id_rsa /tmp/oci_api_private.pem opc@${{ envs.INSTANCE_IP}}:/tmp/oci_api_private.pem 2>> "$LOG_FILE"
-          ssh -i ~/.ssh/temp-id_rsa opc@${{ envs.INSTANCE_IP}} "podman cp /tmp/oci_api_private.pem $CONTAINER_ID:$KEY_DEST_PATH && podman exec $CONTAINER_ID chmod 600 $KEY_DEST_PATH && rm /tmp/oci_api_private.pem" 2>> "$LOG_FILE"
+          scp -i ~/.ssh/temp-id_rsa /tmp/oci_api_private.pem opc@${{ env.INSTANCE_IP }}:/tmp/oci_api_private.pem 2>> "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa opc@${{ env.INSTANCE_IP }} "podman cp /tmp/oci_api_private.pem $CONTAINER_ID:$KEY_DEST_PATH && podman exec $CONTAINER_ID chmod 600 $KEY_DEST_PATH && rm /tmp/oci_api_private.pem" 2>> "$LOG_FILE"
           echo "API private key copied to container" | tee -a "$LOG_FILE"
           # Copy tenancyconfig.properties to container
-          scp -i ~/.ssh/temp-id_rsa /tmp/tenancyconfig.properties opc@${{ envs.INSTANCE_IP}}:/tmp/tenancyconfig.properties 2>> "$LOG_FILE"
-          ssh -i ~/.ssh/temp-id_rsa opc@${{ envs.INSTANCE_IP}} "podman cp /tmp/tenancyconfig.properties $CONTAINER_ID:$CONFIG_FILE && rm /tmp/tenancyconfig.properties" 2>> "$LOG_FILE"
+          scp -i ~/.ssh/temp-id_rsa /tmp/tenancyconfig.properties opc@${{ env.INSTANCE_IP }}:/tmp/tenancyconfig.properties 2>> "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa opc@${{ env.INSTANCE_IP }} "podman cp /tmp/tenancyconfig.properties $CONTAINER_ID:$CONFIG_FILE && rm /tmp/tenancyconfig.properties" 2>> "$LOG_FILE"
           echo "tenancyconfig.properties copied to container" | tee -a "$LOG_FILE"
           # Run createTenancyConfig.py
           for i in {1..3}; do
-            if ssh -i ~/.ssh/temp-id_rsa opc@${{ envs.INSTANCE_IP}} "podman exec $CONTAINER_ID bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/user-scripts/ && python createTenancyConfig.py tenancyconfig.properties'" >> "$LOG_FILE" 2>&1; then
+            if ssh -i ~/.ssh/temp-id_rsa opc@${{ env.INSTANCE_IP }} "podman exec $CONTAINER_ID bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/user-scripts/ && python createTenancyConfig.py tenancyconfig.properties'" >> "$LOG_FILE" 2>&1; then
               echo "Environment initialization completed successfully" | tee -a "$LOG_FILE"
               break
             else
@@ -409,7 +409,7 @@ jobs:
             fi
           done
           # Verify output files
-          ssh -i ~/.ssh/temp-id_rsa opc@${{ envs.INSTANCE_IP}} "podman exec $CONTAINER_ID ls -l /cd3user/tenancies/$PREFIX/" >> "$LOG_FILE" 2>&1
+          ssh -i ~/.ssh/temp-id_rsa opc@${{ env.INSTANCE_IP }} "podman exec $CONTAINER_ID ls -l /cd3user/tenancies/$PREFIX/" >> "$LOG_FILE" 2>&1
           echo "Setup complete. Output files logged in $LOG_FILE" | tee -a "$LOG_FILE"
           # Clean up temporary files
           rm -f /tmp/oci_api_private.pem /tmp/tenancyconfig.properties
