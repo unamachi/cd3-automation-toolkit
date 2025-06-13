@@ -307,23 +307,36 @@ jobs:
 
   CD3_Bootstrap:
     runs-on: self-hosted
-    needs: [Generate_SSH_Key, Deploy_RM_Stack]
+    needs: Generate_SSH_Key
     env:
       OCI_REGION: us-phoenix-1
-      INSTANCE_OCID: ${{ inputs.run_deploy_rm_stack == 'true' && needs.Deploy_RM_Stack.outputs.instance_ocid || inputs.instance_ocid }}
-      INSTANCE_IP: ${{ inputs.run_deploy_rm_stack == 'true' && needs.Deploy_RM_Stack.outputs.instance_ip || inputs.instance_ip }}
       TEMP_SSH_PUBLIC_KEY: ${{ needs.Generate_SSH_Key.outputs.ssh_public_key }}
     steps:
-      - name: Validate Inputs
+      - name: Fetch Deploy_RM_Stack Outputs
+        if: ${{ inputs.run_deploy_rm_stack == 'true' }}
+        id: fetch-outputs
+        run: |
+          LOG_FILE="/tmp/fetch_outputs_$(date +%F_%H-%M-%S).log"
+          echo "Fetching Deploy_RM_Stack outputs" | tee -a "$LOG_FILE"
+          echo "INSTANCE_OCID=${{ needs.Deploy_RM_Stack.outputs.instance_ocid }}" >> $GITHUB_ENV
+          echo "INSTANCE_IP=${{ needs.Deploy_RM_Stack.outputs.instance_ip }}" >> $GITHUB_ENV
+          echo "Outputs fetched: INSTANCE_OCID=${{ needs.Deploy_RM_Stack.outputs.instance_ocid }}, INSTANCE_IP=${{ needs.Deploy_RM_Stack.outputs.instance_ip }}" | tee -a "$LOG_FILE"
+      - name: Set Instance Details for Existing Instance
+        if: ${{ inputs.run_deploy_rm_stack == 'false' }}
+        run: |
+          LOG_FILE="/tmp/set_instance_$(date +%F_%H-%M-%S).log"
+          echo "Setting instance details for existing instance" | tee -a "$LOG_FILE"
+          echo "INSTANCE_OCID=${{ inputs.instance_ocid }}" >> $GITHUB_ENV
+          echo "INSTANCE_IP=${{ inputs.instance_ip }}" >> $GITHUB_ENV
+          echo "Instance details set: INSTANCE_OCID=${{ inputs.instance_ocid }}, INSTANCE_IP=${{ inputs.instance_ip }}" | tee -a "$LOG_FILE"
+      - name: Validate Instance Details
         run: |
           LOG_FILE="/tmp/validate_inputs_$(date +%F_%H-%M-%S).log"
-          if [ "${{ inputs.run_deploy_rm_stack }}" == "false" ]; then
-            if [ -z "${{ env.INSTANCE_OCID }}" ] || [ -z "${{ env.INSTANCE_IP }}" ]; then
-              echo "Error: instance_ocid and instance_ip are required when run_deploy_rm_stack is false" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            echo "Using provided instance_ocid: ${{ env.INSTANCE_OCID }} and instance_ip: ${{ env.INSTANCE_IP }}" | tee -a "$LOG_FILE"
+          if [ -z "${{ env.INSTANCE_OCID }}" ] || [ -z "${{ env.INSTANCE_IP }}" ]; then
+            echo "Error: instance_ocid and instance_ip must be provided (via Deploy_RM_Stack or inputs)" | tee -a "$LOG_FILE"
+            exit 1
           fi
+          echo "Validated instance details: INSTANCE_OCID=${{ env.INSTANCE_OCID }}, INSTANCE_IP=${{ env.INSTANCE_IP }}" | tee -a "$LOG_FILE"
       - name: Checkout code
         uses: actions/checkout@v4
         with:
