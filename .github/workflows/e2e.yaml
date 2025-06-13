@@ -255,12 +255,20 @@ jobs:
       OCI_REGION: us-phoenix-1
       INSTANCE_NAME: workvm-${{ github.run_id }}
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+      - name: Log Workflow File
+        run: |
+          cat .github/workflows/e2e.yaml > /tmp/workflow_content.log
+          echo "Workflow file content logged to /tmp/workflow_content.log"
       - name: Download SSH Private Key Artifact
         uses: actions/download-artifact@v4
         with:
           name: ssh-private-key
           path: .
-
       - name: Configure SSH Key
         run: |
           mkdir -p ~/.ssh
@@ -323,10 +331,14 @@ jobs:
           set -e
           LOG_FILE="/tmp/cd3_debug_$(date +%F_%H-%M-%S).log"
           echo "Debugging secrets availability" | tee -a "$LOG_FILE"
-          echo "TENANCY_SECRET_OCID is set: $[ ! -z "$TENANCY_SECRET_OCID" ]" | tee -a "$LOG_FILE"
-          echo "USER_SECRET_OCID is set: $[ ! -z "$USER_SECRET_OCID" ]" | tee -a "$LOG_FILE"
-          echo "FINGERPRINT_SECRET_OCID is set: $[ ! -z "$FINGERPRINT_SECRET_OCID" ]" | tee -a "$LOG_FILE"
-          echo "API_SECRET_OCID is set: $[ ! -z "$API_SECRET_OCID" ]" | tee -a "$LOG_FILE"
+          echo "TENANCY_SECRET_OCID is set: $[ ! -z "${TENANCY_SECRET_OCID+x}" ]" | tee -a "$LOG_FILE"
+          echo "USER_SECRET_OCID is set: $[ ! -z "${USER_SECRET_OCID+x}" ]" | tee -a "$LOG_FILE"
+          echo "FINGERPRINT_SECRET_OCID is set: $[ ! -z "${FINGERPRINT_SECRET_OCID+x}" ]" | tee -a "$LOG_FILE"
+          echo "API_SECRET_OCID is set: $[ ! -z "${API_SECRET_OCID+x}" ]" | tee -a "$LOG_FILE"
+          echo "TENANCY_SECRET_OCID length: ${#TENANCY_SECRET_OCID}" | tee -a "$LOG_FILE"
+          echo "USER_SECRET_OCID length: ${#USER_SECRET_OCID}" | tee -a "$LOG_FILE"
+          echo "FINGERPRINT_SECRET_OCID length: ${#FINGERPRINT_SECRET_OCID}" | tee -a "$LOG_FILE"
+          echo "API_SECRET_OCID length: ${#API_SECRET_OCID}" | tee -a "$LOG_FILE"
           echo "Environment variables:" | tee -a "$LOG_FILE"
           env | grep -E 'TENANCY_SECRET_OCID|USER_SECRET_OCID|FINGERPRINT_SECRET_OCID|API_SECRET_OCID' | tee -a "$LOG_FILE" || echo "No relevant variables found" | tee -a "$LOG_FILE"
       - name: Setup CD3 Automation Toolkit
@@ -338,14 +350,26 @@ jobs:
         run: |
           set -e
           LOG_FILE="/tmp/cd3_setup_$(date +%F_%H-%M-%S).log"
+          # Debug environment variables
+          echo "TENANCY_SECRET_OCID is set: $[ ! -z "${TENANCY_SECRET_OCID+x}" ]" | tee -a "$LOG_FILE"
+          echo "USER_SECRET_OCID is set: $[ ! -z "${USER_SECRET_OCID+x}" ]" | tee -a "$LOG_FILE"
+          echo "FINGERPRINT_SECRET_OCID is set: $[ ! -z "${FINGERPRINT_SECRET_OCID+x}" ]" | tee -a "$LOG_FILE"
+          echo "API_SECRET_OCID is set: $[ ! -z "${API_SECRET_OCID+x}" ]" | tee -a "$LOG_FILE"
+          echo "TENANCY_SECRET_OCID length: ${#TENANCY_SECRET_OCID}" | tee -a "$LOG_FILE"
+          echo "USER_SECRET_OCID length: ${#USER_SECRET_OCID}" | tee -a "$LOG_FILE"
+          echo "FINGERPRINT_SECRET_OCID length: ${#FINGERPRINT_SECRET_OCID}" | tee -a "$LOG_FILE"
+          echo "API_SECRET_OCID length: ${#API_SECRET_OCID}" | tee -a "$LOG_FILE"
           # Verify secret OCIDs and log which is missing
           for SECRET_NAME in TENANCY_SECRET_OCID USER_SECRET_OCID FINGERPRINT_SECRET_OCID API_SECRET_OCID; do
             eval SECRET_VALUE=\$$SECRET_NAME
-            if [ -z "$SECRET_VALUE" ]; then
+            if [ -z "${SECRET_VALUE+x}" ]; then
               echo "Error: $SECRET_NAME is not set in GitHub Secrets" | tee -a "$LOG_FILE"
               exit 1
             fi
-            # Mask non-empty secrets
+            if [ -z "$SECRET_VALUE" ]; then
+              echo "Error: $SECRET_NAME is set but empty" | tee -a "$LOG_FILE"
+              exit 1
+            fi
             echo "::add-mask::$SECRET_VALUE"
           done
           # Retrieve secrets from OCI Vault
@@ -356,7 +380,7 @@ jobs:
           # Verify secret contents
           for VALUE in "$tenancy_ocid" "$user_ocid" "$fingerprint" "$api_private_key"; do
             if [ -z "$VALUE" ]; then
-              echo "Error: One or more CD3 secret values are empty" | tee -a "$LOG_FILE"
+              echo "Error: One or more secret values are empty" | tee -a "$LOG_FILE"
               exit 1
             fi
           done
