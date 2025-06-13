@@ -16,7 +16,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Print runner info
         run: |
           echo "Running on $(hostname)"
@@ -41,11 +40,8 @@ jobs:
       - name: Generate Temporary SSH Key Pair
         run: |
           ssh-keygen -t rsa -b 4096 -f temp-ssh-key -N "" -C "temp-key-for-oci" > /dev/null 2>&1
-          # Store public key in environment variable
           echo "TEMP_SSH_PUBLIC_KEY=$(cat temp-ssh-key.pub)" >> $GITHUB_ENV
-          # Save private key as artifact (base64 encoded)
           base64 -w0 temp-ssh-key > temp-ssh-key.txt
-          # Mask public key to prevent logging
           echo "::add-mask::$(cat temp-ssh-key.pub)" >> $GITHUB_OUTPUT
       - name: Upload SSH Private Key Artifact
         uses: actions/upload-artifact@v4
@@ -53,7 +49,6 @@ jobs:
           name: ssh-private-key
           path: temp-ssh-key.txt
           retention-days: 1
-
       - name: Retrieve secret contents from OCI Vault
         env:
           TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
@@ -64,28 +59,24 @@ jobs:
           SUBNET_ID_SECRET_OCID: ${{ secrets.SUBNET_ID_SECRET_OCID }}
           OCI_REGION: us-phoenix-1
         run: |
-          # Verify secret OCIDs
           for OCID in "$TENANCY_SECRET_OCID" "$USER_SECRET_OCID" "$COMPARTMENT_SECRET_OCID" "$VCN_COMPARTMENT_SECRET_OCID" "$VCN_ID_SECRET_OCID" "$SUBNET_ID_SECRET_OCID"; do
             if [ -z "$OCID" ]; then
               echo "Error: One or more secret OCIDs not set in GitHub Secrets"
               exit 1
             fi
           done
-          # Fetch secret contents
-          TENANCY_OCID=$(oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-          USER_OCID=$(oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-          COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-          VCN_COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$VCN_COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-          EXISTING_VCN_ID=$(oci secrets secret-bundle get --secret-id "$VCN_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-          EXISTING_SUBNET_ID=$(oci secrets secret-bundle get --secret-id "$SUBNET_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-          # Verify secret contents
+          TENANCY_OCID=$(oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>/dev/null)
+          USER_OCID=$(oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>/dev/null)
+          COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>/dev/null)
+          VCN_COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$VCN_COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>/dev/null)
+          EXISTING_VCN_ID=$(oci secrets secret-bundle get --secret-id "$VCN_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>/dev/null)
+          EXISTING_SUBNET_ID=$(oci secrets secret-bundle get --secret-id "$SUBNET_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>/dev/null)
           for VALUE in "$COMPARTMENT_OCID" "$VCN_COMPARTMENT_OCID" "$EXISTING_VCN_ID" "$EXISTING_SUBNET_ID"; do
             if [ -z "$VALUE" ]; then
               echo "Error: One or more secret values are empty"
               exit 1
             fi
           done
-          # Generate variables.json with temporary SSH public key and unique instance name
           jq -n \
             --arg instance_compartment_ocid "$COMPARTMENT_OCID" \
             --arg vcn_compartment_ocid "$VCN_COMPARTMENT_OCID" \
@@ -150,7 +141,6 @@ jobs:
           OCI_REGION: us-phoenix-1
         run: |
           set -e
-          # Download the zip file locally
           git clone https://github.com/oracle-devrel/cd3-automation-toolkit.git
           cd cd3-automation-toolkit/OCIWorkVMStack
           zip -r ../../../cd3_stack.zip .
@@ -264,6 +254,48 @@ jobs:
         run: |
           cat .github/workflows/e2e.yaml > /tmp/workflow_content.log
           echo "Workflow file content logged to /tmp/workflow_content.log"
+      - name: Reset Runner Environment
+        run: |
+          echo "Resetting runner environment..."
+          rm -rf ~/.ssh/known_hosts 2>/dev/null || true
+          rm -f /tmp/cd3_* /tmp/shell_env_* 2>/dev/null || true
+          echo "Runner environment reset complete"
+      - name: Log Shell Environment
+        run: |
+          LOG_FILE="/tmp/shell_env_$(date +%F_%H-%M-%S).log"
+          echo "Shell: $SHELL" | tee -a "$LOG_FILE"
+          echo "Environment variables:" | tee -a "$LOG_FILE"
+          env | sort >> "$LOG_FILE"
+          echo "Shell environment logged to $LOG_FILE"
+      - name: Verify OCI CLI Configuration
+        run: |
+          LOG_FILE="/tmp/oci_config_$(date +%F_%H-%M-%S).log"
+          echo "OCI CLI version:" | tee -a "$LOG_FILE"
+          oci --version >> "$LOG_FILE" 2>&1
+          echo "Checking instance principal authentication..." | tee -a "$LOG_FILE"
+          oci iam compartment list --auth instance_principal --region us-phoenix-1 --query "data[0].id" --raw-output >> "$LOG_FILE" 2>&1 || echo "Instance principal auth failed" | tee -a "$LOG_FILE"
+          echo "OCI CLI configuration logged to $LOG_FILE"
+      - name: Pre-check Secrets Injection
+        env:
+          TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
+          USER_SECRET_OCID: ${{ secrets.USER_SECRET_OCID }}
+          FINGERPRINT_SECRET_OCID: ${{ secrets.FINGERPRINT_SECRET_OCID }}
+          API_SECRET_OCID: ${{ secrets.API_SECRET_OCID }}
+        run: |
+          LOG_FILE="/tmp/secret_precheck_$(date +%F_%H-%M-%S).log"
+          for SECRET_NAME in TENANCY_SECRET_OCID USER_SECRET_OCID FINGERPRINT_SECRET_OCID API_SECRET_OCID; do
+            eval SECRET_VALUE=\$$SECRET_NAME
+            if [ -z "${SECRET_VALUE+x}" ]; then
+              echo "Error: $SECRET_NAME is not injected" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+            if [ -z "$SECRET_VALUE" ]; then
+              echo "Error: $SECRET_NAME is injected but empty" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+            echo "$SECRET_NAME is injected and non-empty" | tee -a "$LOG_FILE"
+          done
+          echo "Secrets pre-check logged to $LOG_FILE"
       - name: Download SSH Private Key Artifact
         uses: actions/download-artifact@v4
         with:
@@ -284,7 +316,7 @@ jobs:
               --auth instance_principal \
               --region "$OCI_REGION" \
               --query "data.\"lifecycle-state\"" \
-              --raw-output)
+              --raw-output 2>/dev/null)
             if [ "$STATUS" = "RUNNING" ]; then
               echo "✅ Instance is running"
               break
@@ -305,7 +337,7 @@ jobs:
             --auth instance_principal \
             --region "$OCI_REGION" \
             --query "data[0].\"private-ip\"" \
-            --raw-output)
+            --raw-output 2>/dev/null)
           if [ -z "$IP" ]; then
             echo "Error: Could not retrieve private IP for instance."
             exit 1
@@ -350,7 +382,10 @@ jobs:
         run: |
           set -e
           LOG_FILE="/tmp/cd3_setup_$(date +%F_%H-%M-%S).log"
-          # Debug environment variables
+          export TENANCY_SECRET_OCID="$TENANCY_SECRET_OCID"
+          export USER_SECRET_OCID="$USER_SECRET_OCID"
+          export FINGERPRINT_SECRET_OCID="$FINGERPRINT_SECRET_OCID"
+          export API_SECRET_OCID="$API_SECRET_OCID"
           echo "TENANCY_SECRET_OCID is set: $[ ! -z "${TENANCY_SECRET_OCID+x}" ]" | tee -a "$LOG_FILE"
           echo "USER_SECRET_OCID is set: $[ ! -z "${USER_SECRET_OCID+x}" ]" | tee -a "$LOG_FILE"
           echo "FINGERPRINT_SECRET_OCID is set: $[ ! -z "${FINGERPRINT_SECRET_OCID+x}" ]" | tee -a "$LOG_FILE"
@@ -359,7 +394,6 @@ jobs:
           echo "USER_SECRET_OCID length: ${#USER_SECRET_OCID}" | tee -a "$LOG_FILE"
           echo "FINGERPRINT_SECRET_OCID length: ${#FINGERPRINT_SECRET_OCID}" | tee -a "$LOG_FILE"
           echo "API_SECRET_OCID length: ${#API_SECRET_OCID}" | tee -a "$LOG_FILE"
-          # Verify secret OCIDs and log which is missing
           for SECRET_NAME in TENANCY_SECRET_OCID USER_SECRET_OCID FINGERPRINT_SECRET_OCID API_SECRET_OCID; do
             eval SECRET_VALUE=\$$SECRET_NAME
             if [ -z "${SECRET_VALUE+x}" ]; then
@@ -372,27 +406,22 @@ jobs:
             fi
             echo "::add-mask::$SECRET_VALUE"
           done
-          # Retrieve secrets from OCI Vault
-          tenancy_ocid=$(oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-          user_ocid=$(oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-          fingerprint=$(oci secrets secret-bundle get --secret-id "$FINGERPRINT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-          api_private_key=$(oci secrets secret-bundle get --secret-id "$API_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-          # Verify secret contents
+          tenancy_ocid=$(oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null | base64 --decode 2>/dev/null || { echo "Error: Failed to retrieve TENANCY_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; })
+          echo "::add-mask::$tenancy_ocid"
+          user_ocid=$(oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null | base64 --decode 2>/dev/null || { echo "Error: Failed to retrieve USER_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; })
+          echo "::add-mask::$user_ocid"
+          fingerprint=$(oci secrets secret-bundle get --secret-id "$FINGERPRINT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null | base64 --decode 2>/dev/null || { echo "Error: Failed to retrieve FINGERPRINT_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; })
+          echo "::add-mask::$fingerprint"
+          api_private_key=$(oci secrets secret-bundle get --secret-id "$API_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null | base64 --decode 2>/dev/null || { echo "Error: Failed to retrieve API_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; })
+          echo "::add-mask::$api_private_key"
           for VALUE in "$tenancy_ocid" "$user_ocid" "$fingerprint" "$api_private_key"; do
             if [ -z "$VALUE" ]; then
-              echo "Error: One or more secret values are empty" | tee -a "$LOG_FILE"
+              echo "Error: One or more secret values are empty after OCI Vault retrieval" | tee -a "$LOG_FILE"
               exit 1
             fi
           done
-          # Mask sensitive values
-          echo "::add-mask::$tenancy_ocid"
-          echo "::add-mask::$user_ocid"
-          echo "::add-mask::$fingerprint"
-          echo "::add-mask::$api_private_key"
-          # Write API private key to temporary file
-          echo "$api_private_key" > /tmp/oci_api_private.pem
+          printf '%s' "$api_private_key" > /tmp/oci_api_private.pem
           chmod 600 /tmp/oci_api_private.pem
-          # Configuration
           PREFIX="cd3_demo"
           REGION="us-phoenix-1"
           AUTH_MECHANISM="api_key"
@@ -402,7 +431,6 @@ jobs:
           SSH_PUBLIC_KEY="${{ env.TEMP_SSH_PUBLIC_KEY }}"
           CONFIG_FILE="/cd3user/oci_tools/cd3_automation_toolkit/user-scripts/tenancyconfig.properties"
           KEY_DEST_PATH="/cd3user/tenancies/keys/oci_api_private.pem"
-          # Generate tenancyconfig.properties
           cat << EOF > /tmp/tenancyconfig.properties
           prefix=$PREFIX
           tenancy_ocid=$tenancy_ocid
@@ -416,42 +444,40 @@ jobs:
           ssh_public_key=$SSH_PUBLIC_KEY
           EOF
           chmod 600 /tmp/tenancyconfig.properties
-          # Check for running CD3 container
-          container_check=$(ssh -i ~/.ssh/temp-id_rsa opc@${{ env.INSTANCE_IP }} "podman ps | grep $CONTAINER_NAME" 2>> "$LOG_FILE")
+          container_check=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman ps | grep $CONTAINER_NAME" 2>> "$LOG_FILE")
           if [ -z "$container_check" ]; then
             echo "Error: Container '$CONTAINER_NAME' not found or not running on ${{ env.INSTANCE_IP }}" | tee -a "$LOG_FILE"
             exit 1
           fi
-          CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa opc@${{ env.INSTANCE_IP }} "podman ps -q -f name=$CONTAINER_NAME" 2>> "$LOG_FILE")
+          CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman ps -q -f name=$CONTAINER_NAME" 2>> "$LOG_FILE")
           echo "Found container ID" | tee -a "$LOG_FILE"
-          # Copy API private key to container
-          scp -i ~/.ssh/temp-id_rsa /tmp/oci_api_private.pem opc@${{ env.INSTANCE_IP }}:/tmp/oci_api_private.pem 2>> "$LOG_FILE"
-          ssh -i ~/.ssh/temp-id_rsa opc@${{ env.INSTANCE_IP }} "podman cp /tmp/oci_api_private.pem $CONTAINER_ID:$KEY_DEST_PATH && podman exec $CONTAINER_ID chmod 600 $KEY_DEST_PATH && rm /tmp/oci_api_private.pem" 2>> "$LOG_FILE"
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_api_private.pem opc@${{ env.INSTANCE_IP }}:/tmp/oci_api_private.pem 2>> "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman cp /tmp/oci_api_private.pem $CONTAINER_ID:$KEY_DEST_PATH && podman exec $CONTAINER_ID chmod 600 $KEY_DEST_PATH && rm /tmp/oci_api_private.pem" 2>> "$LOG_FILE"
           echo "API private key copied to container" | tee -a "$LOG_FILE"
-          # Copy tenancyconfig.properties to container
-          scp -i ~/.ssh/temp-id_rsa /tmp/tenancyconfig.properties opc@${{ env.INSTANCE_IP }}:/tmp/tenancyconfig.properties 2>> "$LOG_FILE"
-          ssh -i ~/.ssh/temp-id_rsa opc@${{ env.INSTANCE_IP }} "podman cp /tmp/tenancyconfig.properties $CONTAINER_ID:$CONFIG_FILE && rm /tmp/tenancyconfig.properties" 2>> "$LOG_FILE"
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/tenancyconfig.properties opc@${{ env.INSTANCE_IP }}:/tmp/tenancyconfig.properties 2>> "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman cp /tmp/tenancyconfig.properties $CONTAINER_ID:$CONFIG_FILE && rm /tmp/tenancyconfig.properties" 2>> "$LOG_FILE"
           echo "tenancyconfig.properties copied to container" | tee -a "$LOG_FILE"
-          # Run createTenancyConfig.py
-          for i in {1..3}; do
-            if ssh -i ~/.ssh/temp-id_rsa opc@${{ env.INSTANCE_IP }} "podman exec $CONTAINER_ID bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/user-scripts/ && python createTenancyConfig.py tenancyconfig.properties'" >> "$LOG_FILE" 2>&1; then
+          for i in {1..5}; do
+            if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman exec $CONTAINER_ID bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/user-scripts/ && python createTenancyConfig.py tenancyconfig.properties'" >> "$LOG_FILE" 2>&1; then
               echo "Environment initialization completed successfully" | tee -a "$LOG_FILE"
               break
             else
-              echo "Retrying ($i/3) after 60 seconds due to potential API key propagation delay..." | tee -a "$LOG_FILE"
+              echo "Retrying ($i/5) after 60 seconds due to potential API key propagation delay..." | tee -a "$LOG_FILE"
               sleep 60
             fi
-            if [ $i -eq 3 ]; then
-              echo "Error: Initialization failed after 3 attempts" | tee -a "$LOG_FILE"
+            if [ $i -eq 5 ]; then
+              echo "Error: Initialization failed after 5 attempts" | tee -a "$LOG_FILE"
               exit 1
             fi
           done
-          # Verify output files
-          ssh -i ~/.ssh/temp-id_rsa opc@${{ env.INSTANCE_IP }} "podman exec $CONTAINER_ID ls -l /cd3user/tenancies/$PREFIX/" >> "$LOG_FILE" 2>&1
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman exec $CONTAINER_ID ls -l /cd3user/tenancies/$PREFIX/" >> "$LOG_FILE" 2>&1
           echo "Setup complete. Output files logged in $LOG_FILE" | tee -a "$LOG_FILE"
-          # Clean up temporary files
           rm -f /tmp/oci_api_private.pem /tmp/tenancyconfig.properties
           echo "Cleaned up temporary files" | tee -a "$LOG_FILE"
+          if grep -q "$api_private_key" "$LOG_FILE"; then
+            echo "Error: Private key found in log file $LOG_FILE" | tee -a "$LOG_FILE"
+            exit 1
+          fi
       - name: Cleanup SSH Key
         if: always()
         run: |
