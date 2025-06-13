@@ -392,28 +392,28 @@ jobs:
           LOG_FILE="/tmp/cd3_setup_$(date +%F_%H-%M-%S).log"
           export TENANCY_SECRET_OCID="$TENANCY_SECRET_OCID"
           export USER_SECRET_OCID="$USER_SECRET_OCID"
-          export FINGERPRINT_SECRET_OCID="$FINGERPRINT_OCID"
+          export FINGERPRINT_SECRET_OCID="$FINGERPRINT_SECRET_OCID"
           export API_SECRET_OCID="$API_SECRET_OCID"
           
-          # echo "Verifying secrets..." | tee -a "$LOG_FILE"
-          # for VAR in TENANCY_SECRET_OCID USER_SECRET_OCID FINGERPRINT_SECRET_OCID API_SECRET_OCID; do
-          #   if [ -z "${!VAR+x}" ]; then
-          #     echo "Error: $VAR is unset" | tee -a "$LOG_FILE"
-          #     exit 1
-          #   fi
-          #   if [ -z "${!VAR}" ]; then
-          #     echo "Error: $VAR is empty" | tee -a "$LOG_FILE"
-          #     exit 1
-          #   fi
-          #   echo "$VAR is set" | tee -a "$LOG_FILE"
-          #    echo "::add-mask::${!VAR}"
-          # done
+          echo "Verifying secrets..." | tee -a "$LOG_FILE"
+          for VAR in TENANCY_SECRET_OCID USER_SECRET_OCID FINGERPRINT_SECRET_OCID API_SECRET_OCID; do
+            if [ -z "${!VAR+x}" ]; then
+              echo "Error: $VAR is unset" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+            if [ -z "${!VAR}" ]; then
+              echo "Error: $VAR is empty" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+            echo "$VAR is set and non-empty" | tee -a "$LOG_FILE"
+            echo "::add-mask::${!VAR}"
+          done
           
           TEMP_SECRET_FILE="/tmp/secret_temp_$(date +%F_%H-%M-%S).txt"
           oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve TENANCY_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
           tenancy_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
-          echo "::add-mask::$tenancy_ocid
-          oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query to'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve USER_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
+          echo "::add-mask::$tenancy_ocid"
+          oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve USER_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
           user_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
           echo "::add-mask::$user_ocid"
           oci secrets secret-bundle get --secret-id "$FINGERPRINT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve FINGERPRINT_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
@@ -424,7 +424,7 @@ jobs:
           echo "::add-mask::$api_private_key"
           rm -f "$TEMP_SECRET_FILE" 2>/dev/null
           for VALUE in "$tenancy_ocid" "$user_ocid" "$fingerprint" "$api_private_key"; do
-            if [ -z "$VALUE ]; then
+            if [ -z "$VALUE" ]; then
               echo "Error: One or more secret values are empty after OCI Vault retrieval" | tee -a "$LOG_FILE"
               exit 1
             fi
@@ -444,7 +444,7 @@ jobs:
           KEY_DEST_PATH="/cd3user/tenancies/keys/oci_api_private.pem"
           cat << EOF > /tmp/tenancyconfig.properties 2>/dev/null
           prefix=$PREFIX
-          tenancy_ocid=$tenancy_ocid=$tenancy_ocid
+          tenancy_ocid=$tenancy_ocid
           region=$REGION
           auth_mechanism=$AUTH_MECHANISM
           user_ocid=$user_ocid
