@@ -17,6 +17,12 @@ on:
       instance_ip:
         description: 'Instance Private IP (required if run_deploy_rm_stack is false)'
         required: false
+      instance_name:
+        description: 'Instance Name (optional, used for Deploy_RM_Stack if provided)'
+        required: false
+      ssh_public_key:
+        description: 'SSH Public Key (optional, for validation)'
+        required: false
 
 jobs:
   Deploy_RM_Stack:
@@ -26,6 +32,8 @@ jobs:
       stack_id: ${{ steps.create-stack.outputs.stack_id }}
       instance_ocid: ${{ steps.get-instance-ocid.outputs.instance_ocid }}
       instance_ip: ${{ steps.get-ip.outputs.instance_ip }}
+    env:
+      INSTANCE_NAME: ${{ inputs.instance_name || format('workvm-{0}', github.run_id) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -63,7 +71,7 @@ jobs:
         with:
           name: ssh-private-key
           path: temp-ssh-key.txt
-          retention-days: 1
+          retention-days: 5
       - name: Retrieve secret contents from OCI Vault
         env:
           TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
@@ -102,7 +110,7 @@ jobs:
             --arg user_ocid "$USER_OCID" \
             --arg region "$OCI_REGION" \
             --arg source_cidr '["10.0.0.0/24"]' \
-            --arg instance_name "workvm-${{ github.run_id }}" \
+            --arg instance_name "$INSTANCE_NAME" \
             '{
               instance_compartment_strategy: "Use Existing Compartment",
               tenancy_ocid: $tenancy_ocid,
@@ -236,10 +244,10 @@ jobs:
             --compartment-id "$COMPARTMENT_OCID" \
             --region "$OCI_REGION" \
             --auth instance_principal \
-            --query "data[?\"display-name\"=='workvm-${{ github.run_id }}'] | [0].id" \
+            --query "data[?\"display-name\"=='$INSTANCE_NAME'] | [0].id" \
             --raw-output)
           if [ -z "$INSTANCE_OCID" ]; then
-            echo "❌ Instance 'workvm-${{ github.run_id }}' not found."
+            echo "❌ Instance '$INSTANCE_NAME' not found."
             exit 1
           fi
           echo "instance_ocid=$INSTANCE_OCID" >> $GITHUB_OUTPUT
@@ -268,16 +276,13 @@ jobs:
           rm -f cd3_stack.zip
           rm -f temp-ssh-key temp-ssh-key.pub temp-ssh-key.txt
           rm -rf "$GITHUB_WORKSPACE/stack_id.txt"
-      - name: Say hello
-        run: echo "✅ Self-hosted runner is working!"
 
   CD3_Bootstrap:
     runs-on: self-hosted
     needs: Deploy_RM_Stack
-    if: always() # Run even if Deploy_RM_Stack is skipped
+    if: always()
     env:
       OCI_REGION: us-phoenix-1
-      INSTANCE_NAME: workvm-${{ github.run_id }}
       INSTANCE_OCID: ${{ inputs.run_deploy_rm_stack == 'true' && needs.Deploy_RM_Stack.outputs.instance_ocid || inputs.instance_ocid }}
       INSTANCE_IP: ${{ inputs.run_deploy_rm_stack == 'true' && needs.Deploy_RM_Stack.outputs.instance_ip || inputs.instance_ip }}
     steps:
@@ -348,21 +353,84 @@ jobs:
         with:
           name: ssh-private-key
           path: .
+      - name: Verify Artifact
+        if: ${{ inputs.run_deploy_rm_stack == 'true' }}
+        run: |
+          LOG_FILE="/tmp/ssh_debug_$(date +%F_%H-%M-%S).log"
+          if [ ! -f temp-ssh-key.txt ]; then
+            echo "Error: Artifact temp-ssh-key.txt not found" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+          if [ ! -s temp-ssh-key.txt ]; then
+            echo "Error: Artifact temp-ssh-key.txt is empty" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+          echo "Artifact temp-ssh-key.txt exists and is non-empty" | tee -a "$LOG_FILE"
       - name: Configure SSH Key
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        shell: bash
         run: |
+          set -e
+          LOG_FILE="/tmp/ssh_debug_$(date +%F_%H-%M-%S).log"
+          echo "Configuring SSH key" | tee -a "$LOG_FILE"
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           if [ "${{ inputs.run_deploy_rm_stack }}" == "true" ]; then
-            base64 -d temp-ssh-key.txt > ~/.ssh/temp-id_rsa
+            if base64 -d temp-ssh-key.txt > ~/.ssh/temp-id_rsa 2>>"$LOG_FILE"; then
+              echo "Successfully decoded artifact to ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+            else
+              echo "Error: Failed to decode temp-ssh-key.txt" | tee -a "$LOG_FILE"
+              exit 1
+            fi
           else
-            echo "$SSH_PRIVATE_KEY" > ~/.ssh/temp-id_rsa
+            if [ -z "$SSH_PRIVATE_KEY" ]; then
+              echo "Error: SSH_PRIVATE_KEY secret is not set or empty" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+            echo "$SSH_PRIVATE_KEY" > ~/.ssh/temp-id_rsa 2>>"$LOG_FILE" || {
+              echo "Error: Failed to write SSH_PRIVATE_KEY to ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+              exit 1
+            }
+            echo "Successfully wrote SSH_PRIVATE_KEY to ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
           fi
-          chmod 600 ~/.ssh/temp-id_rsa
+          chmod 600 ~/.ssh/temp-id_rsa 2>>"$LOG_FILE" || {
+            echo "Error: Failed to set permissions on ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+            exit 1
+          }
+          if [ -f ~/.ssh/temp-id_rsa ]; then
+            echo "SSH private key exists at ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+            ls -l ~/.ssh/temp-id_rsa >> "$LOG_FILE"
+            head -n 1 ~/.ssh/temp-id_rsa >> "$LOG_FILE"
+          else
+            echo "Error: SSH private key not created at ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+      - name: Validate SSH Public Key
+        if: ${{ inputs.ssh_public_key != '' }}
+        run: |
+          LOG_FILE="/tmp/ssh_debug_$(date +%F_%H-%M-%S).log"
+          echo "Validating provided SSH public key" | tee -a "$LOG_FILE"
+          echo "${{ inputs.ssh_public_key }}" > /tmp/provided_pub_key.pub
+          ssh-keygen -l -f /tmp/provided_pub_key.pub >> "$LOG_FILE" 2>&1 || {
+            echo "Error: Invalid SSH public key provided" | tee -a "$LOG_FILE"
+            exit 1
+          }
+      - name: Verify SSH Key Before Connection
+        run: |
+          LOG_FILE="/tmp/ssh_debug_$(date +%F_%H-%M-%S).log"
+          if [ -f ~/.ssh/temp-id_rsa ]; then
+            echo "SSH private key confirmed at ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+            ls -l ~/.ssh/temp-id_rsa >> "$LOG_FILE"
+          else
+            echo "Error: SSH private key missing at ~/.ssh/temp-id_rsa before connection attempt" | tee -a "$LOG_FILE"
+            exit 1
+          fi
       - name: Wait for Instance to be Ready
         run: |
-          for attempt in {1..5}; do
-            echo "Checking instance status (attempt $attempt/5)..."
+          LOG_FILE="/tmp/ssh_wait_$(date +%F_%H-%M-%S).log"
+          for attempt in {1..10}; do
+            echo "Checking instance status (attempt $attempt/10)..." | tee -a "$LOG_FILE"
             STATUS=$(oci compute instance get \
               --instance-id "${{ env.INSTANCE_OCID }}" \
               --auth instance_principal \
@@ -370,23 +438,33 @@ jobs:
               --query "data.\"lifecycle-state\"" \
               --raw-output 2>/dev/null)
             if [ "$STATUS" = "RUNNING" ]; then
-              echo "✅ Instance is running"
+              echo "✅ Instance is running" | tee -a "$LOG_FILE"
               break
             fi
-            if [ $attempt -eq 5 ]; then
-              echo "❌ Instance not running after 5 attempts"
+            if [ $attempt -eq 10 ]; then
+              echo "❌ Instance not running after 10 attempts" | tee -a "$LOG_FILE"
               exit 1
             fi
-            echo "Instance not ready, waiting 5 minutes..."
+            echo "Instance not ready, waiting 5 minutes..." | tee -a "$LOG_FILE"
             sleep 300
           done
       - name: Test SSH Connection
         run: |
-          ssh-keyscan -H "${{ env.INSTANCE_IP }}" >> ~/.ssh/known_hosts 2>/dev/null || true
-          if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 opc@${{ env.INSTANCE_IP }} exit 2>/dev/null; then
-            echo "SSH connection okay"
+          set -e
+          LOG_FILE="/tmp/ssh_debug_$(date +%F_%H-%M-%S).log"
+          echo "Adding host key to known_hosts" | tee -a "$LOG_FILE"
+          ssh-keyscan -H "${{ env.INSTANCE_IP }}" >> ~/.ssh/known_hosts 2>>"$LOG_FILE" || true
+          echo "Checking SSH key permissions" | tee -a "$LOG_FILE"
+          ls -l ~/.ssh/temp-id_rsa >> "$LOG_FILE" 2>&1
+          echo "Verifying SSH key format" | tee -a "$LOG_FILE"
+          head -n 1 ~/.ssh/temp-id_rsa >> "$LOG_FILE" 2>&1
+          echo "Testing SSH connection with verbose output" | tee -a "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 -v opc@${{ env.INSTANCE_IP }} exit >> "$LOG_FILE" 2>&1
+          if [ $? -eq 0 ]; then
+            echo "SSH connection okay" | tee -a "$LOG_FILE"
           else
-            echo "Error: SSH connection failed"
+            echo "Error: SSH connection failed" | tee -a "$LOG_FILE"
+            cat "$LOG_FILE"
             exit 1
           fi
       - name: Debug Secrets Availability
@@ -470,7 +548,7 @@ jobs:
           CONTAINER_NAME="cd3_toolkit"
           OUTDIR_STRUCTURE_FILE="/cd3user/oci_tools/cd3_automation_toolkit/user-scripts/outdir_structure_file.properties"
           TF_OR_TOFU="terraform"
-          SSH_PUBLIC_KEY="${{ env.TEMP_SSH_PUBLIC_KEY }}"
+          SSH_PUBLIC_KEY="${{ inputs.ssh_public_key || env.TEMP_SSH_PUBLIC_KEY }}"
           CONFIG_FILE="/cd3user/oci_tools/cd3_automation_toolkit/user-scripts/tenancyconfig.properties"
           KEY_DEST_PATH="/cd3user/tenancies/keys/oci_api_private.pem"
           cat << EOF > /tmp/tenancyconfig.properties
@@ -524,7 +602,14 @@ jobs:
             exit 1
           fi
       - name: Cleanup SSH Key
-        if: always()
+        if: success()
         run: |
-          rm -f ~/.ssh/temp-id_rsa
-          echo "Temporary SSH keys deleted"
+          LOG_FILE="/tmp/cleanup_$(date +%F_%H-%M-%S).log"
+          echo "Cleaning up SSH keys" | tee -a "$LOG_FILE"
+          if [ -f ~/.ssh/temp-id_rsa ]; then
+            rm -f ~/.ssh/temp-id_rsa
+            echo "Deleted ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+          else
+            echo "No SSH key found at ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+          fi
+          echo "Cleanup complete" | tee -a "$LOG_FILE"
