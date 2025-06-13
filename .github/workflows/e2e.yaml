@@ -371,7 +371,8 @@ jobs:
             else
               echo "$VAR is set: 0" | tee -a "$LOG_FILE"
             fi
-            echo "$VAR length: ${#${!VAR}}" | tee -a "$LOG_FILE"
+            eval "VALUE=\$$VAR"
+            echo "$VAR length: ${#VALUE}" | tee -a "$LOG_FILE"
           done
           echo "Environment variables:" | tee -a "$LOG_FILE"
           env | grep -E 'TENANCY_SECRET_OCID|USER_SECRET_OCID|FINGERPRINT_SECRET_OCID|API_SECRET_OCID' | tee -a "$LOG_FILE" || echo "No relevant variables found" | tee -a "$LOG_FILE"
@@ -396,7 +397,8 @@ jobs:
             else
               echo "$VAR is set: 0" | tee -a "$LOG_FILE"
             fi
-            echo "$VAR length: ${#${!VAR}}" | tee -a "$LOG_FILE"
+            eval "VALUE=\$$VAR"
+            echo "$VAR length: ${#VALUE}" | tee -a "$LOG_FILE"
             if [ -z "${!VAR}" ]; then
               echo "Error: $VAR is set but empty" | tee -a "$LOG_FILE"
               exit 1
