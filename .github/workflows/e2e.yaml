@@ -6,16 +6,31 @@ on:
       - master
       - develop
   workflow_dispatch:
+    inputs:
+      run_deploy_rm_stack:
+        description: 'Run Deploy_RM_Stack job (true/false)'
+        required: true
+        default: 'true'
+      instance_ocid:
+        description: 'OCI Instance OCID (required if run_deploy_rm_stack is false)'
+        required: false
+      instance_ip:
+        description: 'Instance Private IP (required if run_deploy_rm_stack is false)'
+        required: false
 
 jobs:
   Deploy_RM_Stack:
     runs-on: [self-hosted]
+    if: ${{ inputs.run_deploy_rm_stack == 'true' }}
     outputs:
       stack_id: ${{ steps.create-stack.outputs.stack_id }}
       instance_ocid: ${{ steps.get-instance-ocid.outputs.instance_ocid }}
+      instance_ip: ${{ steps.get-ip.outputs.instance_ip }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Print runner info
         run: |
           echo "Running on $(hostname)"
@@ -228,6 +243,24 @@ jobs:
             exit 1
           fi
           echo "instance_ocid=$INSTANCE_OCID" >> $GITHUB_OUTPUT
+      - name: Get Instance Private IP
+        id: get-ip
+        env:
+          OCI_REGION: us-phoenix-1
+        run: |
+          INSTANCE_OCID=${{ steps.get-instance-ocid.outputs.instance_ocid }}
+          IP=$(oci compute instance list-vnics \
+            --instance-id "$INSTANCE_OCID" \
+            --auth instance_principal \
+            --region "$OCI_REGION" \
+            --query "data[0].\"private-ip\"" \
+            --raw-output 2>/dev/null)
+          if [ -z "$IP" ]; then
+            echo "Error: Could not retrieve private IP for instance."
+            exit 1
+          fi
+          echo "instance_ip=$IP" >> $GITHUB_OUTPUT
+          echo "Found private IP: $IP"
       - name: Clean up sensitive files
         if: always()
         run: |
@@ -241,10 +274,22 @@ jobs:
   CD3_Bootstrap:
     runs-on: self-hosted
     needs: Deploy_RM_Stack
+    if: always() # Run even if Deploy_RM_Stack is skipped
     env:
       OCI_REGION: us-phoenix-1
       INSTANCE_NAME: workvm-${{ github.run_id }}
+      INSTANCE_OCID: ${{ inputs.run_deploy_rm_stack == 'true' && needs.Deploy_RM_Stack.outputs.instance_ocid || inputs.instance_ocid }}
+      INSTANCE_IP: ${{ inputs.run_deploy_rm_stack == 'true' && needs.Deploy_RM_Stack.outputs.instance_ip || inputs.instance_ip }}
     steps:
+      - name: Validate Inputs
+        run: |
+          if [ "${{ inputs.run_deploy_rm_stack }}" == "false" ]; then
+            if [ -z "${{ env.INSTANCE_OCID }}" ] || [ -z "${{ env.INSTANCE_IP }}" ]; then
+              echo "Error: instance_ocid and instance_ip are required when run_deploy_rm_stack is false"
+              exit 1
+            fi
+            echo "Using provided instance_ocid: ${{ env.INSTANCE_OCID }} and instance_ip: ${{ env.INSTANCE_IP }}"
+          fi
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -258,7 +303,7 @@ jobs:
         run: |
           echo "Resetting runner environment..."
           rm -rf ~/.ssh/known_hosts 2>/dev/null || true
-          rm -f /tmp/cd3_* /tmp/shell_env_* /tmp/oci_config_* /tmp/secret_precheck_* 2>/dev/null || true
+          rm -f /tmp/cd3_* /tmp/shell_env_* /tmp/oci_config_* /tmp/secret_precheck_* /tmp/secret_temp_* 2>/dev/null || true
           echo "Runner environment reset complete"
       - name: Log Shell Environment
         run: |
@@ -298,22 +343,28 @@ jobs:
           done
           echo "Secrets pre-check logged to $LOG_FILE"
       - name: Download SSH Private Key Artifact
+        if: ${{ inputs.run_deploy_rm_stack == 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: ssh-private-key
           path: .
       - name: Configure SSH Key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           mkdir -p ~/.ssh
-          base64 -d temp-ssh-key.txt > ~/.ssh/temp-id_rsa
+          if [ "${{ inputs.run_deploy_rm_stack }}" == "true" ]; then
+            base64 -d temp-ssh-key.txt > ~/.ssh/temp-id_rsa
+          else
+            echo "$SSH_PRIVATE_KEY" > ~/.ssh/temp-id_rsa
+          fi
           chmod 600 ~/.ssh/temp-id_rsa
       - name: Wait for Instance to be Ready
         run: |
-          INSTANCE_OCID=${{ needs.Deploy_RM_Stack.outputs.instance_ocid }}
           for attempt in {1..5}; do
             echo "Checking instance status (attempt $attempt/5)..."
             STATUS=$(oci compute instance get \
-              --instance-id "$INSTANCE_OCID" \
+              --instance-id "${{ env.INSTANCE_OCID }}" \
               --auth instance_principal \
               --region "$OCI_REGION" \
               --query "data.\"lifecycle-state\"" \
@@ -329,25 +380,9 @@ jobs:
             echo "Instance not ready, waiting 5 minutes..."
             sleep 300
           done
-      - name: Get Instance Private IP
-        id: get-ip
-        run: |
-          INSTANCE_OCID=${{ needs.Deploy_RM_Stack.outputs.instance_ocid }}
-          IP=$(oci compute instance list-vnics \
-            --instance-id "$INSTANCE_OCID" \
-            --auth instance_principal \
-            --region "$OCI_REGION" \
-            --query "data[0].\"private-ip\"" \
-            --raw-output 2>/dev/null)
-          if [ -z "$IP" ]; then
-            echo "Error: Could not retrieve private IP for instance."
-            exit 1
-          fi
-          echo "INSTANCE_IP=$IP" >> $GITHUB_ENV
-          echo "Found private IP."
       - name: Test SSH Connection
         run: |
-          ssh-keyscan -H ${{ env.INSTANCE_IP }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -H "${{ env.INSTANCE_IP }}" >> ~/.ssh/known_hosts 2>/dev/null || true
           if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 opc@${{ env.INSTANCE_IP }} exit 2>/dev/null; then
             echo "SSH connection okay"
           else
@@ -371,9 +406,9 @@ jobs:
             else
               echo "$VAR is set: 0" | tee -a "$LOG_FILE"
             fi
-            echo "$VAR length: ${#${VAR}}" | tee -a "$LOG_FILE"
+            echo "$VAR length: ${#${!VAR}}" | tee -a "$LOG_FILE"
           done
-          echo "Environment variables:" | tee -a "$LOG_FILE"
+          echo "Environment variables (masked):" | tee -a "$LOG_FILE"
           env | grep -E 'TENANCY_SECRET_OCID|USER_SECRET_OCID|FINGERPRINT_SECRET_OCID|API_SECRET_OCID' | tee -a "$LOG_FILE" || echo "No relevant variables found" | tee -a "$LOG_FILE"
       - name: Setup CD3 Automation Toolkit
         env:
@@ -395,8 +430,9 @@ jobs:
               echo "$VAR is set: 1" | tee -a "$LOG_FILE"
             else
               echo "$VAR is set: 0" | tee -a "$LOG_FILE"
+              exit 1
             fi
-            echo "$VAR length: ${#${VAR}}" | tee -a "$LOG_FILE"
+            echo "$VAR length: ${#${!VAR}}" | tee -a "$LOG_FILE"
             if [ -z "${!VAR}" ]; then
               echo "Error: $VAR is set but empty" | tee -a "$LOG_FILE"
               exit 1
@@ -404,17 +440,18 @@ jobs:
             echo "::add-mask::${!VAR}"
           done
           TEMP_SECRET_FILE="/tmp/secret_temp_$(date +%F_%H-%M-%S).txt"
-          oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve TENANCY_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
-          tenancy_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
+          echo "Retrieving secrets from OCI Vault" | tee -a "$LOG_FILE"
+          oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to retrieve TENANCY_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
+          tenancy_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>>"$LOG_FILE")
           echo "::add-mask::$tenancy_ocid"
-          oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve USER_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
-          user_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
+          oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to retrieve USER_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
+          user_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>>"$LOG_FILE")
           echo "::add-mask::$user_ocid"
-          oci secrets secret-bundle get --secret-id "$FINGERPRINT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve FINGERPRINT_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
-          fingerprint=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
+          oci secrets secret-bundle get --secret-id "$FINGERPRINT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to retrieve FINGERPRINT_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
+          fingerprint=$(base64 --decode "$TEMP_SECRET_FILE" 2>>"$LOG_FILE")
           echo "::add-mask::$fingerprint"
-          oci secrets secret-bundle get --secret-id "$API_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve API_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
-          api_private_key=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
+          oci secrets secret-bundle get --secret-id "$API_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to retrieve API_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
+          api_private_key=$(base64 --decode "$TEMP_SECRET_FILE" 2>>"$LOG_FILE")
           echo "::add-mask::$api_private_key"
           rm -f "$TEMP_SECRET_FILE"
           for VALUE in "$tenancy_ocid" "$user_ocid" "$fingerprint" "$api_private_key"; do
@@ -450,18 +487,18 @@ jobs:
           EOF
           chmod 600 /tmp/tenancyconfig.properties
           echo "Checking container status" | tee -a "$LOG_FILE"
-          container_check=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman ps | grep $CONTAINER_NAME" 2>> "$LOG_FILE")
+          container_check=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman ps | grep $CONTAINER_NAME" 2>>"$LOG_FILE")
           if [ -z "$container_check" ]; then
             echo "Error: Container '$CONTAINER_NAME' not found or not running on ${{ env.INSTANCE_IP }}" | tee -a "$LOG_FILE"
             exit 1
           fi
-          CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman ps -q -f name=$CONTAINER_NAME" 2>> "$LOG_FILE")
+          CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman ps -q -f name=$CONTAINER_NAME" 2>>"$LOG_FILE")
           echo "Found container ID: $CONTAINER_ID" | tee -a "$LOG_FILE"
-          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_api_private.pem opc@${{ env.INSTANCE_IP }}:/tmp/oci_api_private.pem 2>> "$LOG_FILE"
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman cp /tmp/oci_api_private.pem $CONTAINER_ID:$KEY_DEST_PATH && podman exec $CONTAINER_ID chmod 600 $KEY_DEST_PATH && rm /tmp/oci_api_private.pem" 2>> "$LOG_FILE"
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_api_private.pem opc@${{ env.INSTANCE_IP }}:/tmp/oci_api_private.pem 2>>"$LOG_FILE" || { echo "Error: Failed to SCP private key" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman cp /tmp/oci_api_private.pem $CONTAINER_ID:$KEY_DEST_PATH && podman exec $CONTAINER_ID chmod 600 $KEY_DEST_PATH && rm /tmp/oci_api_private.pem" 2>>"$LOG_FILE" || { echo "Error: Failed to copy private key to container" | tee -a "$LOG_FILE"; exit 1; }
           echo "API private key copied to container" | tee -a "$LOG_FILE"
-          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/tenancyconfig.properties opc@${{ env.INSTANCE_IP }}:/tmp/tenancyconfig.properties 2>> "$LOG_FILE"
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman cp /tmp/tenancyconfig.properties $CONTAINER_ID:$CONFIG_FILE && rm /tmp/tenancyconfig.properties" 2>> "$LOG_FILE"
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/tenancyconfig.properties opc@${{ env.INSTANCE_IP }}:/tmp/tenancyconfig.properties 2>>"$LOG_FILE" || { echo "Error: Failed to SCP tenancy config" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman cp /tmp/tenancyconfig.properties $CONTAINER_ID:$CONFIG_FILE && rm /tmp/tenancyconfig.properties" 2>>"$LOG_FILE" || { echo "Error: Failed to copy tenancy config to container" | tee -a "$LOG_FILE"; exit 1; }
           echo "tenancyconfig.properties copied to container" | tee -a "$LOG_FILE"
           echo "Running createTenancyConfig.py" | tee -a "$LOG_FILE"
           for i in {1..5}; do
@@ -477,11 +514,12 @@ jobs:
               exit 1
             fi
           done
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman exec $CONTAINER_ID ls -l /cd3user/tenancies/$PREFIX/" >> "$LOG_FILE" 2>&1
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman exec $CONTAINER_ID ls -l /cd3user/tenancies/$PREFIX/" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list output directory" | tee -a "$LOG_FILE"; exit 1; }
           echo "Setup complete. Output files logged in $LOG_FILE" | tee -a "$LOG_FILE"
           rm -f /tmp/oci_api_private.pem /tmp/tenancyconfig.properties
           echo "Cleaned up temporary files" | tee -a "$LOG_FILE"
-          if grep -q -e "-----BEGIN PRIVATE KEY-----" -e "$api_private_key" /tmp/cd3_* /tmp/oci_config_* /tmp/secret_precheck_* 2>/dev/null; then
+          echo "Checking logs for private key exposure" | tee -a "$LOG_FILE"
+          if grep -q -e "-----BEGIN PRIVATE KEY-----" -e "$(echo "$api_private_key" | head -n 1)" /tmp/cd3_* /tmp/oci_config_* /tmp/secret_precheck_* /tmp/shell_env_* 2>/dev/null; then
             echo "Error: Private key found in log files" | tee -a "$LOG_FILE"
             exit 1
           fi
