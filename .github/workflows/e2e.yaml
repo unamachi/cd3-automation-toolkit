@@ -1,4 +1,4 @@
-name: Self-hosted Runner Test
+name: CD3 E2E Testing
 
 on:
   push:
@@ -21,12 +21,10 @@ jobs:
         run: |
           echo "Running on $(hostname)"
           uname -a
-
       - name: Verify Python installation
         run: |
           python3 --version
           which python3
-
       - name: Ensure OCI CLI is installed
         run: |
           if ! command -v oci &> /dev/null; then
@@ -35,13 +33,11 @@ jobs:
             ./oci_install.sh --accept-all-defaults
             export PATH=$HOME/bin:$PATH
           fi
-
       - name: Install git (Oracle Linux)
         run: |
           if ! command -v git &> /dev/null; then
             sudo yum install -y git
           fi
-
       - name: Generate Temporary SSH Key Pair
         run: |
           ssh-keygen -t rsa -b 4096 -f temp-ssh-key -N "" -C "temp-key-for-oci" > /dev/null 2>&1
@@ -51,7 +47,6 @@ jobs:
           base64 -w0 temp-ssh-key > temp-ssh-key.txt
           # Mask public key to prevent logging
           echo "::add-mask::$(cat temp-ssh-key.pub)" >> $GITHUB_OUTPUT
-
       - name: Upload SSH Private Key Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -76,7 +71,6 @@ jobs:
               exit 1
             fi
           done
-
           # Fetch secret contents
           TENANCY_OCID=$(oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
           USER_OCID=$(oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
@@ -84,7 +78,6 @@ jobs:
           VCN_COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$VCN_COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
           EXISTING_VCN_ID=$(oci secrets secret-bundle get --secret-id "$VCN_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
           EXISTING_SUBNET_ID=$(oci secrets secret-bundle get --secret-id "$SUBNET_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
-
           # Verify secret contents
           for VALUE in "$COMPARTMENT_OCID" "$VCN_COMPARTMENT_OCID" "$EXISTING_VCN_ID" "$EXISTING_SUBNET_ID"; do
             if [ -z "$VALUE" ]; then
@@ -92,7 +85,6 @@ jobs:
               exit 1
             fi
           done
-
           # Generate variables.json with temporary SSH public key and unique instance name
           jq -n \
             --arg instance_compartment_ocid "$COMPARTMENT_OCID" \
@@ -141,7 +133,6 @@ jobs:
               existing_drg_id: "",
               source_cidr: $source_cidr
             }' > variables.json
-
       - name: Set ZIP URL
         run: |
           echo "github.ref is: ${{ github.ref }}"
@@ -153,7 +144,6 @@ jobs:
             echo "ZIP_URL=https://github.com/oracle-devrel/cd3-automation-toolkit/archive/refs/heads/main.zip" >> $GITHUB_ENV
             echo "⚠️ Warning: Defaulting ZIP_URL to main.zip as fallback."
           fi
-
       - name: Create Resource Manager Stack
         id: create-stack
         env:
@@ -165,9 +155,7 @@ jobs:
           cd cd3-automation-toolkit/OCIWorkVMStack
           zip -r ../../../cd3_stack.zip .
           cd ../../../
-
           COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' $GITHUB_WORKSPACE/variables.json)
-
           echo "Creating new stack..."
           STACK_ID=$(oci resource-manager stack create \
             --auth instance_principal \
@@ -179,15 +167,12 @@ jobs:
             --terraform-version "1.2.x" \
             --region "$OCI_REGION" \
             --query "data.id" --raw-output)
-
           if [ -z "$STACK_ID" ]; then
             echo "❌ Error: Stack creation failed"
             exit 1
           fi
-
           echo "✅ STACK_ID: $STACK_ID"
           echo "stack_id=$STACK_ID" >> $GITHUB_OUTPUT
-
       - name: Apply Resource Manager Stack
         id: apply-stack
         env:
@@ -202,12 +187,10 @@ jobs:
             --execution-plan-strategy AUTO_APPROVED \
             --region "$OCI_REGION" \
             --query "data.id" --raw-output)
-
           if [ -z "$JOB_ID" ]; then
             echo "❌ Error: Failed to create apply job"
             exit 1
           fi
-
           echo "Waiting for apply job $JOB_ID to complete..."
           for attempt in {1..40}; do
             JOB_STATUS=$(oci resource-manager job get \
@@ -238,7 +221,6 @@ jobs:
             echo "Waiting 60 seconds before next check..."
             sleep 60
           done
-
       - name: Get Instance OCID
         id: get-instance-ocid
         env:
@@ -256,7 +238,6 @@ jobs:
             exit 1
           fi
           echo "instance_ocid=$INSTANCE_OCID" >> $GITHUB_OUTPUT
-
       - name: Clean up sensitive files
         if: always()
         run: |
@@ -264,11 +245,10 @@ jobs:
           rm -f cd3_stack.zip
           rm -f temp-ssh-key temp-ssh-key.pub temp-ssh-key.txt
           rm -rf "$GITHUB_WORKSPACE/stack_id.txt"
-
       - name: Say hello
         run: echo "✅ Self-hosted runner is working!"
 
-  setup_connection:
+  CD3_Bootstrap:
     runs-on: self-hosted
     needs: Deploy_RM_Stack
     env:
@@ -286,7 +266,6 @@ jobs:
           mkdir -p ~/.ssh
           base64 -d temp-ssh-key.txt > ~/.ssh/temp-id_rsa
           chmod 600 ~/.ssh/temp-id_rsa
-
       - name: Wait for Instance to be Ready
         run: |
           INSTANCE_OCID=${{ needs.Deploy_RM_Stack.outputs.instance_ocid }}
@@ -309,7 +288,6 @@ jobs:
             echo "Instance not ready, waiting 5 minutes..."
             sleep 300
           done
-
       - name: Get Instance Private IP
         id: get-ip
         run: |
@@ -321,29 +299,123 @@ jobs:
             --query "data[0].\"private-ip\"" \
             --raw-output)
           if [ -z "$IP" ]; then
-            echo "❌ Failed to retrieve private IP for instance."
+            echo "Error: Could not retrieve private IP for instance."
             exit 1
           fi
           echo "INSTANCE_IP=$IP" >> $GITHUB_ENV
-          echo "✅ Found private IP: $IP"
-
+          echo "Found private IP."
       - name: Test SSH Connection
         run: |
-          ssh-keyscan -H ${{ env.INSTANCE_IP }} >> ~/.ssh/known_hosts 2>/dev/null || true
-          if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 opc@${{ env.INSTANCE_IP }} exit 2>/dev/null; then
-            echo "✅ SSH connection okay"
+          ssh-keyscan -H ${{ envs.INSTANCE_IP}} >> ~/.ssh/known_hosts 2>/dev/null || true
+          if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 opc@${{ envs.INSTANCE_IP}} exit 2>/dev/null; then
+            echo "SSH connection okay"
           else
-            echo "❌ SSH connection failed"
+            echo "Error: SSH connection failed"
             exit 1
           fi
-
-      - name: Placeholder for System Tasks
+      - name: Setup CD3 Automation Toolkit
+        env:
+          CD3_TENANCY_SECRET_OCID: ${{ secrets.CD3_TENANCY_SECRET_OCID }}
+          CD3_USER_SECRET_OCID: ${{ secrets.CD3_USER_SECRET_OCID }}
+          CD3_FINGERPRINT_SECRET_OCID: ${{ secrets.CD3_FINGERPRINT_SECRET_OCID }}
+          CD3_API_KEY_SECRET_OCID: ${{ secrets.CD3_API_KEY_SECRET_OCID }}
         run: |
-          echo "SSH connection established. Ready for system tasks."
-          # Add system tasks here once SSH is verified
-
+          set -e
+          LOG_FILE="/tmp/cd3_setup_$(date +%F_%H-%M-%S).log
+          # Mask sensitive values to prevent logging
+          echo "::add-mask::$CD3_TENANCY_SECRET_OCID"
+          echo "::add-mask::$CD3_USER_SECRET_OCID"
+          echo "::add-mask::$CD3_FINGERPRINT_SECRET_OCID"
+          echo "::add-mask::$CD3_API_KEY_SECRET_OCID"
+          # Verify secret OCIDs
+          for OCID in "$CD3_TENANCY_SECRET_OCID" "$CD3_USER_SECRET_OCID" "$CD3_FINGERPRINT_SECRET_OCID" "$CD3_API_KEY_SECRET_OCID"; do
+            if [ -z "$OCID" ]; then
+              echo "Error: One or more CD3 secret OCIDs not set in GitHub Secrets" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+          done
+          # Retrieve secrets from OCI Vault
+          tenancy_ocid=$(oci secrets secret-bundle get --secret-id "$CD3_TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+          user_ocid=$(oci secrets secret-bundle get --secret-id "$CD3_USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+          fingerprint=$(oci secrets secret-bundle get --secret-id "$CD3_FINGERPRINT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+          api_private_key=$(oci secrets secret-bundle get --secret-id "$CD3_API_KEY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode)
+          # Verify secret contents
+          for VALUE in "$tenancy_ocid" "$user_ocid" "$fingerprint" "$api_private_key"; do
+            if [ -z "$VALUE" ]; then
+              echo "Error: One or more CD3 secret values are empty" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+          done
+          # Mask sensitive values
+          echo "::add-mask::$tenancy_ocid"
+          echo "::add-mask::$user_ocid"
+          echo "::add-mask::$fingerprint"
+          echo "::add-mask::$api_private_key"
+          # Write API private key to temporary file
+          echo "$api_private_key" > /tmp/oci_api_private.pem
+          chmod 600 /tmp/oci_api_private.pem
+          # Configuration
+          PREFIX="demo"
+          REGION="us-phoenix-1"
+          AUTH_MECHANISM="api_key"
+          CONTAINER_NAME="cd3_toolkit"
+          OUTDIR_STRUCTURE_FILE="/cd3user/oci_tools/cd3_automation_toolkit/user-scripts/outdir_structure_file.properties"
+          TF_OR_TOFU="terraform"
+          SSH_PUBLIC_KEY="${{ env.TEMP_SSH_PUBLIC_KEY }}"
+          CONFIG_FILE="/cd3user/oci_tools/cd3_automation_toolkit/user-scripts/tenancyconfig.properties"
+          KEY_DEST_PATH="/cd3user/tenancies/keys/oci_api_private.pem"
+          # Generate tenancyconfig.properties
+          cat << EOF > /tmp/tenancyconfig.properties
+          prefix=$PREFIX
+          tenancy_ocid=$tenancy_ocid
+          region=$REGION
+          auth_mechanism=$AUTH_MECHANISM
+          user_ocid=$user_ocid
+          key_path=$KEY_DEST_PATH
+          fingerprint=$fingerprint
+          outdir_structure_file=$OUTDIR_STRUCTURE_FILE
+          tf_or_tofu=$TF_OR_TOFU
+          ssh_public_key=$SSH_PUBLIC_KEY
+          EOF
+          chmod 600 /tmp/tenancyconfig.properties
+          # Check for running CD3 container
+          container_check=$(ssh -i ~/.ssh/temp-id_rsa opc@${{ envs.INSTANCE_IP}} "podman ps | grep $CONTAINER_NAME" 2>> "$LOG_FILE")
+          if [ -z "$container_check" ]; then
+            echo "Error: Container '$CONTAINER_NAME' not found or not running on ${{ envs.INSTANCE_IP}}" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+          CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa opc@${{ envs.INSTANCE_IP}} "podman ps -q -f name=$CONTAINER_NAME" 2>> "$LOG_FILE")
+          echo "Found container ID" | tee -a "$LOG_FILE"
+          # Copy API private key to container
+          scp -i ~/.ssh/temp-id_rsa /tmp/oci_api_private.pem opc@${{ envs.INSTANCE_IP}}:/tmp/oci_api_private.pem 2>> "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa opc@${{ envs.INSTANCE_IP}} "podman cp /tmp/oci_api_private.pem $CONTAINER_ID:$KEY_DEST_PATH && podman exec $CONTAINER_ID chmod 600 $KEY_DEST_PATH && rm /tmp/oci_api_private.pem" 2>> "$LOG_FILE"
+          echo "API private key copied to container" | tee -a "$LOG_FILE"
+          # Copy tenancyconfig.properties to container
+          scp -i ~/.ssh/temp-id_rsa /tmp/tenancyconfig.properties opc@${{ envs.INSTANCE_IP}}:/tmp/tenancyconfig.properties 2>> "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa opc@${{ envs.INSTANCE_IP}} "podman cp /tmp/tenancyconfig.properties $CONTAINER_ID:$CONFIG_FILE && rm /tmp/tenancyconfig.properties" 2>> "$LOG_FILE"
+          echo "tenancyconfig.properties copied to container" | tee -a "$LOG_FILE"
+          # Run createTenancyConfig.py
+          for i in {1..3}; do
+            if ssh -i ~/.ssh/temp-id_rsa opc@${{ envs.INSTANCE_IP}} "podman exec $CONTAINER_ID bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/user-scripts/ && python createTenancyConfig.py tenancyconfig.properties'" >> "$LOG_FILE" 2>&1; then
+              echo "Environment initialization completed successfully" | tee -a "$LOG_FILE"
+              break
+            else
+              echo "Retrying ($i/3) after 60 seconds due to potential API key propagation delay..." | tee -a "$LOG_FILE"
+              sleep 60
+            fi
+            if [ $i -eq 3 ]; then
+              echo "Error: Initialization failed after 3 attempts" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+          done
+          # Verify output files
+          ssh -i ~/.ssh/temp-id_rsa opc@${{ envs.INSTANCE_IP}} "podman exec $CONTAINER_ID ls -l /cd3user/tenancies/$PREFIX/" >> "$LOG_FILE" 2>&1
+          echo "Setup complete. Output files logged in $LOG_FILE" | tee -a "$LOG_FILE"
+          # Clean up temporary files
+          rm -f /tmp/oci_api_private.pem /tmp/tenancyconfig.properties
+          echo "Cleaned up temporary files" | tee -a "$LOG_FILE"
       - name: Cleanup SSH Key
         if: always()
         run: |
           rm -f ~/.ssh/temp-id_rsa
-          echo "✅ Temporary SSH keys deleted"
+          echo "Temporary SSH keys deleted"
