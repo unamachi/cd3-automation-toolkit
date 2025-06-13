@@ -26,39 +26,54 @@ jobs:
     runs-on: self-hosted
     outputs:
       ssh_public_key: ${{ steps.generate-key.outputs.ssh_public_key }}
+      ssh_public_key_secondary: ${{ steps.generate-key.outputs.ssh_public_key_secondary }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Generate Temporary SSH Key Pair
+      - name: Generate Temporary SSH Key Pairs
         id: generate-key
         run: |
           LOG_FILE="/tmp/ssh_key_gen_$(date +%F_%H-%M-%S).log"
-          echo "Generating temporary SSH key pair" | tee -a "$LOG_FILE"
+          echo "Generating primary temporary SSH key pair" | tee -a "$LOG_FILE"
           ssh-keygen -t rsa -b 4096 -f temp-ssh-key -N "" -C "temp-key-for-oci" >> "$LOG_FILE" 2>&1
           if [ -f temp-ssh-key ]; then
-            echo "Private key generated" | tee -a "$LOG_FILE"
+            echo "Primary private key generated" | tee -a "$LOG_FILE"
             echo "ssh_public_key=$(cat temp-ssh-key.pub)" >> $GITHUB_OUTPUT
             base64 -w0 temp-ssh-key > temp-ssh-key.txt
-            echo "Public key masked" | tee -a "$LOG_FILE"
+            echo "Primary public key masked" | tee -a "$LOG_FILE"
             echo "::add-mask::$(cat temp-ssh-key.pub)"
           else
-            echo "Error: Failed to generate SSH key" | tee -a "$LOG_FILE"
+            echo "Error: Failed to generate primary SSH key" | tee -a "$LOG_FILE"
             exit 1
           fi
-      - name: Upload SSH Private Key Artifact
+          echo "Generating secondary temporary SSH key pair" | tee -a "$LOG_FILE"
+          ssh-keygen -t rsa -b 4096 -f temp-ssh-key-secondary -N "" -C "temp-key-for-oci-secondary" >> "$LOG_FILE" 2>&1
+          if [ -f temp-ssh-key-secondary ]; then
+            echo "Secondary private key generated" | tee -a "$LOG_FILE"
+            echo "ssh_public_key_secondary=$(cat temp-ssh-key-secondary.pub)" >> $GITHUB_OUTPUT
+            base64 -w0 temp-ssh-key-secondary > temp-ssh-key-secondary.txt
+            echo "Secondary public key masked" | tee -a "$LOG_FILE"
+            echo "::add-mask::$(cat temp-ssh-key-secondary.pub)"
+          else
+            echo "Error: Failed to generate secondary SSH key" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+      - name: Upload SSH Private Key Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ssh-private-key
-          path: temp-ssh-key.txt
+          name: ssh-private-keys
+          path: |
+            temp-ssh-key.txt
+            temp-ssh-key-secondary.txt
           retention-days: 5
-      - name: Cleanup SSH Key
+      - name: Cleanup SSH Keys
         if: always()
         run: |
           LOG_FILE="/tmp/cleanup_generate_$(date +%F_%H-%M-%S).log"
           echo "Cleaning up SSH keys in Generate_SSH_Key" | tee -a "$LOG_FILE"
-          rm -f temp-ssh-key temp-ssh-key.pub temp-ssh-key.txt 2>>"$LOG_FILE" || echo "No SSH keys to delete" | tee -a "$LOG_FILE"
+          rm -f temp-ssh-key temp-ssh-key.pub temp-ssh-key.txt temp-ssh-key-secondary temp-ssh-key-secondary.pub temp-ssh-key-secondary.txt 2>>"$LOG_FILE" || echo "No SSH keys to delete" | tee -a "$LOG_FILE"
           echo "Cleanup complete" | tee -a "$LOG_FILE"
 
   Deploy_RM_Stack:
@@ -72,6 +87,7 @@ jobs:
     env:
       INSTANCE_NAME: ${{ inputs.instance_name || format('workvm-{0}', github.run_id) }}
       TEMP_SSH_PUBLIC_KEY: ${{ needs.Generate_SSH_Key.outputs.ssh_public_key }}
+      TEMP_SSH_PUBLIC_KEY_SECONDARY: ${{ needs.Generate_SSH_Key.outputs.ssh_public_key_secondary }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -132,7 +148,7 @@ jobs:
             --arg vcn_compartment_ocid "$VCN_COMPARTMENT_OCID" \
             --arg existing_vcn_id "$EXISTING_VCN_ID" \
             --arg existing_subnet_id "$EXISTING_SUBNET_ID" \
-            --arg ssh_public_key "${{ env.TEMP_SSH_PUBLIC_KEY }}" \
+            --arg ssh_public_key "${{ env.TEMP_SSH_PUBLIC_KEY }}\n${{ env.TEMP_SSH_PUBLIC_KEY_SECONDARY }}" \
             --arg tenancy_ocid "$TENANCY_OCID" \
             --arg user_ocid "$USER_OCID" \
             --arg region "$OCI_REGION" \
@@ -311,6 +327,7 @@ jobs:
     env:
       OCI_REGION: us-phoenix-1
       TEMP_SSH_PUBLIC_KEY: ${{ needs.Generate_SSH_Key.outputs.ssh_public_key }}
+      TEMP_SSH_PUBLIC_KEY_SECONDARY: ${{ needs.Generate_SSH_Key.outputs.ssh_public_key_secondary }}
     steps:
       - name: Fetch Deploy_RM_Stack Outputs
         if: ${{ inputs.run_deploy_rm_stack == 'true' }}
@@ -349,72 +366,55 @@ jobs:
           rm -rf ~/.ssh/known_hosts 2>/dev/null || true
           rm -f /tmp/cd3_* /tmp/shell_env_* /tmp/oci_config_* /tmp/secret_precheck_* /tmp/secret_temp_* 2>/dev/null || true
           echo "Runner environment reset complete" | tee -a "$LOG_FILE"
-      - name: Download SSH Private Key Artifact
+      - name: Download SSH Private Key Artifacts
         uses: actions/download-artifact@v4
         with:
-          name: ssh-private-key
+          name: ssh-private-keys
           path: .
-      - name: Verify Artifact
+      - name: Verify Artifacts
         run: |
           LOG_FILE="/tmp/ssh_debug_$(date +%F_%H-%M-%S).log"
-          if [ ! -f temp-ssh-key.txt ]; then
-            echo "Error: Artifact temp-ssh-key.txt not found" | tee -a "$LOG_FILE"
-            exit 1
-          fi
-          if [ ! -s temp-ssh-key.txt ]; then
-            echo "Error: Artifact temp-ssh-key.txt is empty" | tee -a "$LOG_FILE"
-            exit 1
-          fi
-          echo "Artifact temp-ssh-key.txt exists and is non-empty" | tee -a "$LOG_FILE"
-      - name: Configure SSH Key
+          for file in temp-ssh-key.txt temp-ssh-key-secondary.txt; do
+            if [ ! -f "$file" ]; then
+              echo "Error: Artifact $file not found" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+            if [ ! -s "$file" ]; then
+              echo "Error: Artifact $file is empty" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+            echo "Artifact $file exists and is non-empty" | tee -a "$LOG_FILE"
+          done
+      - name: Configure SSH Keys
         run: |
           set -e
           LOG_FILE="/tmp/ssh_debug_$(date +%F_%H-%M-%S).log"
-          echo "Configuring SSH key" | tee -a "$LOG_FILE"
+          echo "Configuring SSH keys" | tee -a "$LOG_FILE"
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           if base64 -d temp-ssh-key.txt > ~/.ssh/temp-id_rsa 2>>"$LOG_FILE"; then
-            echo "Successfully decoded SSH key to ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+            echo "Successfully decoded primary SSH key to ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
           else
             echo "Error: Failed to decode temp-ssh-key.txt" | tee -a "$LOG_FILE"
             exit 1
           fi
-          chmod 600 ~/.ssh/temp-id_rsa 2>>"$LOG_FILE" || {
-            echo "Error: Failed to set permissions on ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
-            exit 1
-          }
-          if [ -f ~/.ssh/temp-id_rsa ]; then
-            echo "SSH private key exists at ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
-            ls -l ~/.ssh/temp-id_rsa >> "$LOG_FILE"
-            head -n 1 ~/.ssh/temp-id_rsa >> "$LOG_FILE"
+          if base64 -d temp-ssh-key-secondary.txt > ~/.ssh/temp-id_rsa-secondary 2>>"$LOG_FILE"; then
+            echo "Successfully decoded secondary SSH key to ~/.ssh/temp-id_rsa-secondary" | tee -a "$LOG_FILE"
           else
-            echo "Error: SSH private key not created at ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+            echo "Error: Failed to decode temp-ssh-key-secondary.txt" | tee -a "$LOG_FILE"
             exit 1
           fi
-      - name: Update Instance Metadata (for existing instance)
-        if: ${{ inputs.run_deploy_rm_stack == 'false' }}
-        run: |
-          LOG_FILE="/tmp/ssh_update_$(date +%F_%H-%M-%S).log"
-          echo "Updating instance metadata for ${{ env.INSTANCE_OCID }}" | tee -a "$LOG_FILE"
-          echo "${{ env.TEMP_SSH_PUBLIC_KEY }}" > temp-ssh-key.pub
-          oci compute instance update \
-            --instance-id "${{ env.INSTANCE_OCID }}" \
-            --metadata "{\"ssh_authorized_keys\": \"${{ env.TEMP_SSH_PUBLIC_KEY }}\"}" \
-            --auth instance_principal \
-            --region "$OCI_REGION" \
-            --force >> "$LOG_FILE" 2>&1 || {
-            echo "Error: Failed to update instance metadata" | tee -a "$LOG_FILE"
+          chmod 600 ~/.ssh/temp-id_rsa ~/.ssh/temp-id_rsa-secondary 2>>"$LOG_FILE" || {
+            echo "Error: Failed to set permissions on SSH keys" | tee -a "$LOG_FILE"
             exit 1
           }
-          echo "Instance metadata updated successfully" | tee -a "$LOG_FILE"
-      - name: Verify SSH Key Before Connection
-        run: |
-          LOG_FILE="/tmp/ssh_debug_$(date +%F_%H-%M-%S).log"
-          if [ -f ~/.ssh/temp-id_rsa ]; then
-            echo "SSH private key confirmed at ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
-            ls -l ~/.ssh/temp-id_rsa >> "$LOG_FILE"
+          if [ -f ~/.ssh/temp-id_rsa ] && [ -f ~/.ssh/temp-id_rsa-secondary ]; then
+            echo "SSH private keys exist at ~/.ssh/" | tee -a "$LOG_FILE"
+            ls -l ~/.ssh/temp-id_rsa ~/.ssh/temp-id_rsa-secondary >> "$LOG_FILE"
+            head -n 1 ~/.ssh/temp-id_rsa >> "$LOG_FILE"
+            head -n 1 ~/.ssh/temp-id_rsa-secondary >> "$LOG_FILE"
           else
-            echo "Error: SSH private key missing at ~/.ssh/temp-id_rsa before connection attempt" | tee -a "$LOG_FILE"
+            echo "Error: One or both SSH private keys not created" | tee -a "$LOG_FILE"
             exit 1
           fi
       - name: Wait for Instance to be Ready
@@ -446,17 +446,24 @@ jobs:
           echo "Adding host key to known_hosts" | tee -a "$LOG_FILE"
           ssh-keyscan -H "${{ env.INSTANCE_IP }}" >> ~/.ssh/known_hosts 2>>"$LOG_FILE" || true
           echo "Checking SSH key permissions" | tee -a "$LOG_FILE"
-          ls -l ~/.ssh/temp-id_rsa >> "$LOG_FILE" 2>&1
-          echo "Verifying SSH key format" | tee -a "$LOG_FILE"
+          ls -l ~/.ssh/temp-id_rsa ~/.ssh/temp-id_rsa-secondary >> "$LOG_FILE" 2>&1
+          echo "Verifying SSH key formats" | tee -a "$LOG_FILE"
           head -n 1 ~/.ssh/temp-id_rsa >> "$LOG_FILE" 2>&1
-          echo "Testing SSH connection with verbose output" | tee -a "$LOG_FILE"
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 -v opc@${{ env.INSTANCE_IP }} exit >> "$LOG_FILE" 2>&1
-          if [ $? -eq 0 ]; then
-            echo "SSH connection okay" | tee -a "$LOG_FILE"
+          head -n 1 ~/.ssh/temp-id_rsa-secondary >> "$LOG_FILE" 2>&1
+          echo "Testing SSH connection with primary key" | tee -a "$LOG_FILE"
+          if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 -v opc@${{ env.INSTANCE_IP }} exit >> "$LOG_FILE" 2>&1; then
+            echo "Primary SSH connection okay" | tee -a "$LOG_FILE"
+            echo "SSH_KEY_PATH=~/.ssh/temp-id_rsa" >> $GITHUB_ENV
           else
-            echo "Error: SSH connection failed" | tee -a "$LOG_FILE"
-            cat "$LOG_FILE"
-            exit 1
+            echo "Primary SSH connection failed, trying secondary key" | tee -a "$LOG_FILE"
+            if ssh -i ~/.ssh/temp-id_rsa-secondary -o StrictHostKeyChecking=no -o ConnectTimeout=10 -v opc@${{ env.INSTANCE_IP }} exit >> "$LOG_FILE" 2>&1; then
+              echo "Secondary SSH connection okay" | tee -a "$LOG_FILE"
+              echo "SSH_KEY_PATH=~/.ssh/temp-id_rsa-secondary" >> $GITHUB_ENV
+            else
+              echo "Error: Both SSH connections failed" | tee -a "$LOG_FILE"
+              cat "$LOG_FILE"
+              exit 1
+            fi
           fi
       - name: Pre-check Secrets Injection
         env:
@@ -557,22 +564,22 @@ jobs:
           EOF
           chmod 600 /tmp/tenancyconfig.properties
           echo "Checking container status" | tee -a "$LOG_FILE"
-          container_check=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman ps | grep $CONTAINER_NAME" 2>>"$LOG_FILE")
+          container_check=$(ssh -i "${{ env.SSH_KEY_PATH }}" -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman ps | grep $CONTAINER_NAME" 2>>"$LOG_FILE")
           if [ -z "$container_check" ]; then
             echo "Error: Container '$CONTAINER_NAME' not found or not running on ${{ env.INSTANCE_IP }}" | tee -a "$LOG_FILE"
             exit 1
           fi
-          CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman ps -q -f name=$CONTAINER_NAME" 2>>"$LOG_FILE")
+          CONTAINER_ID=$(ssh -i "${{ env.SSH_KEY_PATH }}" -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman ps -q -f name=$CONTAINER_NAME" 2>>"$LOG_FILE")
           echo "Found container ID: $CONTAINER_ID" | tee -a "$LOG_FILE"
-          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_api_private.pem opc@${{ env.INSTANCE_IP }}:/tmp/oci_api_private.pem 2>>"$LOG_FILE" || { echo "Error: Failed to SCP private key" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman cp /tmp/oci_api_private.pem $CONTAINER_ID:$KEY_DEST_PATH && podman exec $CONTAINER_ID chmod 600 $KEY_DEST_PATH && rm /tmp/oci_api_private.pem" 2>>"$LOG_FILE" || { echo "Error: Failed to copy private key to container" | tee -a "$LOG_FILE"; exit 1; }
+          scp -i "${{ env.SSH_KEY_PATH }}" -o StrictHostKeyChecking=no /tmp/oci_api_private.pem opc@${{ env.INSTANCE_IP }}:/tmp/oci_api_private.pem 2>>"$LOG_FILE" || { echo "Error: Failed to SCP private key" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i "${{ env.SSH_KEY_PATH }}" -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman cp /tmp/oci_api_private.pem $CONTAINER_ID:$KEY_DEST_PATH && podman exec $CONTAINER_ID chmod 600 $KEY_DEST_PATH && rm /tmp/oci_api_private.pem" 2>>"$LOG_FILE" || { echo "Error: Failed to copy private key to container" | tee -a "$LOG_FILE"; exit 1; }
           echo "API private key copied to container" | tee -a "$LOG_FILE"
-          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/tenancyconfig.properties opc@${{ env.INSTANCE_IP }}:/tmp/tenancyconfig.properties 2>>"$LOG_FILE" || { echo "Error: Failed to SCP tenancy config" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman cp /tmp/tenancyconfig.properties $CONTAINER_ID:$CONFIG_FILE && rm /tmp/tenancyconfig.properties" 2>>"$LOG_FILE" || { echo "Error: Failed to copy tenancy config to container" | tee -a "$LOG_FILE"; exit 1; }
+          scp -i "${{ env.SSH_KEY_PATH }}" -o StrictHostKeyChecking=no /tmp/tenancyconfig.properties opc@${{ env.INSTANCE_IP }}:/tmp/tenancyconfig.properties 2>>"$LOG_FILE" || { echo "Error: Failed to SCP tenancy config" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i "${{ env.SSH_KEY_PATH }}" -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman cp /tmp/tenancyconfig.properties $CONTAINER_ID:$CONFIG_FILE && rm /tmp/tenancyconfig.properties" 2>>"$LOG_FILE" || { echo "Error: Failed to copy tenancy config to container" | tee -a "$LOG_FILE"; exit 1; }
           echo "tenancyconfig.properties copied to container" | tee -a "$LOG_FILE"
           echo "Running createTenancyConfig.py" | tee -a "$LOG_FILE"
           for i in {1..5}; do
-            if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman exec $CONTAINER_ID bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/user-scripts/ && python createTenancyConfig.py tenancyconfig.properties'" >> "$LOG_FILE" 2>&1; then
+            if ssh -i "${{ env.SSH_KEY_PATH }}" -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman exec $CONTAINER_ID bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/user-scripts/ && python createTenancyConfig.py tenancyconfig.properties'" >> "$LOG_FILE" 2>&1; then
               echo "Environment initialization completed successfully" | tee -a "$LOG_FILE"
               break
             else
@@ -584,7 +591,7 @@ jobs:
               exit 1
             fi
           done
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman exec $CONTAINER_ID ls -l /cd3user/tenancies/$PREFIX/" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list output directory" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i "${{ env.SSH_KEY_PATH }}" -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "podman exec $CONTAINER_ID ls -l /cd3user/tenancies/$PREFIX/" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list output directory" | tee -a "$LOG_FILE"; exit 1; }
           echo "Setup complete. Output files logged in $LOG_FILE" | tee -a "$LOG_FILE"
           rm -f /tmp/oci_api_private.pem /tmp/tenancyconfig.properties
           echo "Cleaned up temporary files" | tee -a "$LOG_FILE"
@@ -593,10 +600,10 @@ jobs:
             echo "Error: Private key found in log files" | tee -a "$LOG_FILE"
             exit 1
           fi
-      - name: Cleanup SSH Key
+      - name: Cleanup SSH Keys
         if: always()
         run: |
           LOG_FILE="/tmp/cleanup_bootstrap_$(date +%F_%H-%M-%S).log"
           echo "Cleaning up SSH keys in CD3_Bootstrap" | tee -a "$LOG_FILE"
-          rm -f ~/.ssh/temp-id_rsa temp-ssh-key.txt temp-ssh-key.pub 2>>"$LOG_FILE" || echo "No SSH keys to delete" | tee -a "$LOG_FILE"
+          rm -f ~/.ssh/temp-id_rsa ~/.ssh/temp-id_rsa-secondary temp-ssh-key.txt temp-ssh-key-secondary.txt temp-ssh-key.pub temp-ssh-key-secondary.pub 2>>"$LOG_FILE" || echo "No SSH keys to delete" | tee -a "$LOG_FILE"
           echo "Cleanup complete" | tee -a "$LOG_FILE"
