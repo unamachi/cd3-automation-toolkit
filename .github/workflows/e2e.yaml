@@ -419,20 +419,15 @@ jobs:
           oci secrets secret-bundle get --secret-id "$FINGERPRINT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve FINGERPRINT_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
           fingerprint=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
           echo "::add-mask::$fingerprint"
-          oci secrets secret-bundle get --secret-id "$API_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve API_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
-          api_private_key=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
-          echo "::add-mask::$api_private_key"
+          oci secrets secret-bundle get --secret-id "$API_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode > /tmp/oci_api_private.pem 2>/dev/null || { echo "Error: Failed to retrieve API_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
+          chmod 600 /tmp/oci_api_private.pem 2>/dev/null
           rm -f "$TEMP_SECRET_FILE" 2>/dev/null
-          for VALUE in "$tenancy_ocid" "$user_ocid" "$fingerprint" "$api_private_key"; do
+          for VALUE in "$tenancy_ocid" "$user_ocid" "$fingerprint"; do
             if [ -z "$VALUE" ]; then
               echo "Error: One or more secret values are empty after OCI Vault retrieval" | tee -a "$LOG_FILE"
               exit 1
             fi
           done
-          cat << EOF > /tmp/oci_api_private.pem 2>/dev/null
-          $api_private_key
-          EOF
-          chmod 600 /tmp/oci_api_private.pem 2>/dev/null
           PREFIX="cd3_demo"
           REGION="us-phoenix-1"
           AUTH_MECHANISM="api_key"
@@ -484,10 +479,14 @@ jobs:
             fi
           done
           scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_api_private.pem opc@${{ env.INSTANCE_IP }}:/tmp/oci_api_private.pem 2>>"$LOG_FILE" || { echo "Error: Failed to SCP private key" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/oci_api_private.pem $CONTAINER_ID:$KEY_DEST_PATH && sudo podman exec $CONTAINER_ID chmod 600 $KEY_DEST_PATH && rm /tmp/oci_api_private.pem" 2>>"$LOG_FILE" || { echo "Error: Failed to copy private key to container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID mkdir -p /cd3user/tenancies/keys" 2>>"$LOG_FILE" || { echo "Error: Failed to create directory in container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/oci_api_private.pem $CONTAINER_ID:$KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy private key to container" | tee -a "$LOG_FILE"; ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID ls -ld /cd3user/tenancies/keys" >> "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID chmod 600 $KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on private key" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/oci_api_private.pem" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary private key" | tee -a "$LOG_FILE"; exit 1; }
           echo "API private key copied to container" | tee -a "$LOG_FILE"
           scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/tenancyconfig.properties opc@${{ env.INSTANCE_IP }}:/tmp/tenancyconfig.properties 2>>"$LOG_FILE" || { echo "Error: Failed to SCP tenancy config" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/tenancyconfig.properties $CONTAINER_ID:$CONFIG_FILE && rm /tmp/tenancyconfig.properties" 2>>"$LOG_FILE" || { echo "Error: Failed to copy tenancy config to container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/tenancyconfig.properties $CONTAINER_ID:$CONFIG_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to copy tenancy config to container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/tenancyconfig.properties" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary tenancy config" | tee -a "$LOG_FILE"; exit 1; }
           echo "tenancyconfig.properties copied to container" | tee -a "$LOG_FILE"
           echo "Running createTenancyConfig.py..." | tee -a "$LOG_FILE"
           for i in {1..5}; do
