@@ -20,13 +20,50 @@ on:
       instance_name:
         description: 'Instance Name (optional, used for Deploy_RM_Stack if provided)'
         required: false
-      ssh_public_key:
-        description: 'SSH Public Key (optional, for validation)'
-        required: false
 
 jobs:
+  Generate_SSH_Key:
+    runs-on: self-hosted
+    outputs:
+      ssh_public_key: ${{ steps.generate-key.outputs.ssh_public_key }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Generate Temporary SSH Key Pair
+        id: generate-key
+        run: |
+          LOG_FILE="/tmp/ssh_key_gen_$(date +%F_%H-%M-%S).log"
+          echo "Generating temporary SSH key pair" | tee -a "$LOG_FILE"
+          ssh-keygen -t rsa -b 4096 -f temp-ssh-key -N "" -C "temp-key-for-oci" >> "$LOG_FILE" 2>&1
+          if [ -f temp-ssh-key ]; then
+            echo "Private key generated" | tee -a "$LOG_FILE"
+            echo "ssh_public_key=$(cat temp-ssh-key.pub)" >> $GITHUB_OUTPUT
+            base64 -w0 temp-ssh-key > temp-ssh-key.txt
+            echo "Public key masked" | tee -a "$LOG_FILE"
+            echo "::add-mask::$(cat temp-ssh-key.pub)"
+          else
+            echo "Error: Failed to generate SSH key" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+      - name: Upload SSH Private Key Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-private-key
+          path: temp-ssh-key.txt
+          retention-days: 5
+      - name: Cleanup SSH Key
+        if: always()
+        run: |
+          LOG_FILE="/tmp/cleanup_generate_$(date +%F_%H-%M-%S).log"
+          echo "Cleaning up SSH keys in Generate_SSH_Key" | tee -a "$LOG_FILE"
+          rm -f temp-ssh-key temp-ssh-key.pub temp-ssh-key.txt 2>>"$LOG_FILE" || echo "No SSH keys to delete" | tee -a "$LOG_FILE"
+          echo "Cleanup complete" | tee -a "$LOG_FILE"
+
   Deploy_RM_Stack:
-    runs-on: [self-hosted]
+    runs-on: self-hosted
+    needs: Generate_SSH_Key
     if: ${{ inputs.run_deploy_rm_stack == 'true' }}
     outputs:
       stack_id: ${{ steps.create-stack.outputs.stack_id }}
@@ -34,6 +71,7 @@ jobs:
       instance_ip: ${{ steps.get-ip.outputs.instance_ip }}
     env:
       INSTANCE_NAME: ${{ inputs.instance_name || format('workvm-{0}', github.run_id) }}
+      TEMP_SSH_PUBLIC_KEY: ${{ needs.Generate_SSH_Key.outputs.ssh_public_key }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -60,18 +98,6 @@ jobs:
           if ! command -v git &> /dev/null; then
             sudo yum install -y git
           fi
-      - name: Generate Temporary SSH Key Pair
-        run: |
-          ssh-keygen -t rsa -b 4096 -f temp-ssh-key -N "" -C "temp-key-for-oci" > /dev/null 2>&1
-          echo "TEMP_SSH_PUBLIC_KEY=$(cat temp-ssh-key.pub)" >> $GITHUB_ENV
-          base64 -w0 temp-ssh-key > temp-ssh-key.txt
-          echo "::add-mask::$(cat temp-ssh-key.pub)" >> $GITHUB_OUTPUT
-      - name: Upload SSH Private Key Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ssh-private-key
-          path: temp-ssh-key.txt
-          retention-days: 5
       - name: Retrieve secret contents from OCI Vault
         env:
           TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
@@ -82,21 +108,22 @@ jobs:
           SUBNET_ID_SECRET_OCID: ${{ secrets.SUBNET_ID_SECRET_OCID }}
           OCI_REGION: us-phoenix-1
         run: |
+          LOG_FILE="/tmp/vault_retrieve_$(date +%F_%H-%M-%S).log"
           for OCID in "$TENANCY_SECRET_OCID" "$USER_SECRET_OCID" "$COMPARTMENT_SECRET_OCID" "$VCN_COMPARTMENT_SECRET_OCID" "$VCN_ID_SECRET_OCID" "$SUBNET_ID_SECRET_OCID"; do
             if [ -z "$OCID" ]; then
-              echo "Error: One or more secret OCIDs not set in GitHub Secrets"
+              echo "Error: One or more secret OCIDs not set in GitHub Secrets" | tee -a "$LOG_FILE"
               exit 1
             fi
           done
-          TENANCY_OCID=$(oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>/dev/null)
-          USER_OCID=$(oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>/dev/null)
-          COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>/dev/null)
-          VCN_COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$VCN_COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>/dev/null)
-          EXISTING_VCN_ID=$(oci secrets secret-bundle get --secret-id "$VCN_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>/dev/null)
-          EXISTING_SUBNET_ID=$(oci secrets secret-bundle get --secret-id "$SUBNET_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>/dev/null)
+          TENANCY_OCID=$(oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
+          USER_OCID=$(oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
+          COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
+          VCN_COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$VCN_COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
+          EXISTING_VCN_ID=$(oci secrets secret-bundle get --secret-id "$VCN_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
+          EXISTING_SUBNET_ID=$(oci secrets secret-bundle get --secret-id "$SUBNET_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
           for VALUE in "$COMPARTMENT_OCID" "$VCN_COMPARTMENT_OCID" "$EXISTING_VCN_ID" "$EXISTING_SUBNET_ID"; do
             if [ -z "$VALUE" ]; then
-              echo "Error: One or more secret values are empty"
+              echo "Error: One or more secret values are empty" | tee -a "$LOG_FILE"
               exit 1
             fi
           done
@@ -272,89 +299,49 @@ jobs:
       - name: Clean up sensitive files
         if: always()
         run: |
-          rm -f variables.json
-          rm -f cd3_stack.zip
-          rm -f temp-ssh-key temp-ssh-key.pub temp-ssh-key.txt
-          rm -rf "$GITHUB_WORKSPACE/stack_id.txt"
+          LOG_FILE="/tmp/cleanup_deploy_$(date +%F_%H-%M-%S).log"
+          echo "Cleaning up sensitive files in Deploy_RM_Stack" | tee -a "$LOG_FILE"
+          rm -f variables.json cd3_stack.zip 2>>"$LOG_FILE" || echo "No files to delete" | tee -a "$LOG_FILE"
+          rm -rf "$GITHUB_WORKSPACE/stack_id.txt" 2>>"$LOG_FILE" || true
+          echo "Cleanup complete" | tee -a "$LOG_FILE"
 
   CD3_Bootstrap:
     runs-on: self-hosted
-    needs: Deploy_RM_Stack
-    if: always()
+    needs: [Generate_SSH_Key, Deploy_RM_Stack]
     env:
       OCI_REGION: us-phoenix-1
       INSTANCE_OCID: ${{ inputs.run_deploy_rm_stack == 'true' && needs.Deploy_RM_Stack.outputs.instance_ocid || inputs.instance_ocid }}
       INSTANCE_IP: ${{ inputs.run_deploy_rm_stack == 'true' && needs.Deploy_RM_Stack.outputs.instance_ip || inputs.instance_ip }}
+      TEMP_SSH_PUBLIC_KEY: ${{ needs.Generate_SSH_Key.outputs.ssh_public_key }}
     steps:
       - name: Validate Inputs
         run: |
+          LOG_FILE="/tmp/validate_inputs_$(date +%F_%H-%M-%S).log"
           if [ "${{ inputs.run_deploy_rm_stack }}" == "false" ]; then
             if [ -z "${{ env.INSTANCE_OCID }}" ] || [ -z "${{ env.INSTANCE_IP }}" ]; then
-              echo "Error: instance_ocid and instance_ip are required when run_deploy_rm_stack is false"
+              echo "Error: instance_ocid and instance_ip are required when run_deploy_rm_stack is false" | tee -a "$LOG_FILE"
               exit 1
             fi
-            echo "Using provided instance_ocid: ${{ env.INSTANCE_OCID }} and instance_ip: ${{ env.INSTANCE_IP }}"
+            echo "Using provided instance_ocid: ${{ env.INSTANCE_OCID }} and instance_ip: ${{ env.INSTANCE_IP }}" | tee -a "$LOG_FILE"
           fi
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
-      - name: Log Workflow File
-        run: |
-          cat .github/workflows/e2e.yaml > /tmp/workflow_content.log
-          echo "Workflow file content logged to /tmp/workflow_content.log"
       - name: Reset Runner Environment
         run: |
-          echo "Resetting runner environment..."
+          LOG_FILE="/tmp/reset_runner_$(date +%F_%H-%M-%S).log"
+          echo "Resetting runner environment..." | tee -a "$LOG_FILE"
           rm -rf ~/.ssh/known_hosts 2>/dev/null || true
           rm -f /tmp/cd3_* /tmp/shell_env_* /tmp/oci_config_* /tmp/secret_precheck_* /tmp/secret_temp_* 2>/dev/null || true
-          echo "Runner environment reset complete"
-      - name: Log Shell Environment
-        run: |
-          LOG_FILE="/tmp/shell_env_$(date +%F_%H-%M-%S).log"
-          echo "Shell: $SHELL" | tee -a "$LOG_FILE"
-          echo "Environment variables:" | tee -a "$LOG_FILE"
-          env | sort >> "$LOG_FILE"
-          echo "Shell environment logged to $LOG_FILE"
-      - name: Verify OCI CLI Configuration
-        run: |
-          LOG_FILE="/tmp/oci_config_$(date +%F_%H-%M-%S).log"
-          echo "OCI CLI version:" | tee -a "$LOG_FILE"
-          oci --version >> "$LOG_FILE" 2>&1
-          echo "Checking instance principal authentication..." | tee -a "$LOG_FILE"
-          oci iam compartment list --auth instance_principal --region us-phoenix-1 --query "data[0].id" --raw-output >> "$LOG_FILE" 2>&1 || echo "Instance principal auth failed" | tee -a "$LOG_FILE"
-          echo "OCI CLI configuration logged to $LOG_FILE"
-      - name: Pre-check Secrets Injection
-        env:
-          TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
-          USER_SECRET_OCID: ${{ secrets.USER_SECRET_OCID }}
-          FINGERPRINT_SECRET_OCID: ${{ secrets.FINGERPRINT_SECRET_OCID }}
-          API_SECRET_OCID: ${{ secrets.API_SECRET_OCID }}
-        shell: bash
-        run: |
-          LOG_FILE="/tmp/secret_precheck_$(date +%F_%H-%M-%S).log"
-          for SECRET_NAME in TENANCY_SECRET_OCID USER_SECRET_OCID FINGERPRINT_SECRET_OCID API_SECRET_OCID; do
-            eval SECRET_VALUE=\$$SECRET_NAME
-            if [ -z "${SECRET_VALUE+x}" ]; then
-              echo "Error: $SECRET_NAME is not injected" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            if [ -z "$SECRET_VALUE" ]; then
-              echo "Error: $SECRET_NAME is injected but empty" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            echo "$SECRET_NAME is injected and non-empty" | tee -a "$LOG_FILE"
-          done
-          echo "Secrets pre-check logged to $LOG_FILE"
+          echo "Runner environment reset complete" | tee -a "$LOG_FILE"
       - name: Download SSH Private Key Artifact
-        if: ${{ inputs.run_deploy_rm_stack == 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: ssh-private-key
           path: .
       - name: Verify Artifact
-        if: ${{ inputs.run_deploy_rm_stack == 'true' }}
         run: |
           LOG_FILE="/tmp/ssh_debug_$(date +%F_%H-%M-%S).log"
           if [ ! -f temp-ssh-key.txt ]; then
@@ -367,32 +354,17 @@ jobs:
           fi
           echo "Artifact temp-ssh-key.txt exists and is non-empty" | tee -a "$LOG_FILE"
       - name: Configure SSH Key
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        shell: bash
         run: |
           set -e
           LOG_FILE="/tmp/ssh_debug_$(date +%F_%H-%M-%S).log"
           echo "Configuring SSH key" | tee -a "$LOG_FILE"
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          if [ "${{ inputs.run_deploy_rm_stack }}" == "true" ]; then
-            if base64 -d temp-ssh-key.txt > ~/.ssh/temp-id_rsa 2>>"$LOG_FILE"; then
-              echo "Successfully decoded artifact to ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
-            else
-              echo "Error: Failed to decode temp-ssh-key.txt" | tee -a "$LOG_FILE"
-              exit 1
-            fi
+          if base64 -d temp-ssh-key.txt > ~/.ssh/temp-id_rsa 2>>"$LOG_FILE"; then
+            echo "Successfully decoded SSH key to ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
           else
-            if [ -z "$SSH_PRIVATE_KEY" ]; then
-              echo "Error: SSH_PRIVATE_KEY secret is not set or empty" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            echo "$SSH_PRIVATE_KEY" > ~/.ssh/temp-id_rsa 2>>"$LOG_FILE" || {
-              echo "Error: Failed to write SSH_PRIVATE_KEY to ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
-              exit 1
-            }
-            echo "Successfully wrote SSH_PRIVATE_KEY to ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+            echo "Error: Failed to decode temp-ssh-key.txt" | tee -a "$LOG_FILE"
+            exit 1
           fi
           chmod 600 ~/.ssh/temp-id_rsa 2>>"$LOG_FILE" || {
             echo "Error: Failed to set permissions on ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
@@ -406,16 +378,22 @@ jobs:
             echo "Error: SSH private key not created at ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
             exit 1
           fi
-      - name: Validate SSH Public Key
-        if: ${{ inputs.ssh_public_key != '' }}
+      - name: Update Instance Metadata (for existing instance)
+        if: ${{ inputs.run_deploy_rm_stack == 'false' }}
         run: |
-          LOG_FILE="/tmp/ssh_debug_$(date +%F_%H-%M-%S).log"
-          echo "Validating provided SSH public key" | tee -a "$LOG_FILE"
-          echo "${{ inputs.ssh_public_key }}" > /tmp/provided_pub_key.pub
-          ssh-keygen -l -f /tmp/provided_pub_key.pub >> "$LOG_FILE" 2>&1 || {
-            echo "Error: Invalid SSH public key provided" | tee -a "$LOG_FILE"
+          LOG_FILE="/tmp/ssh_update_$(date +%F_%H-%M-%S).log"
+          echo "Updating instance metadata for ${{ env.INSTANCE_OCID }}" | tee -a "$LOG_FILE"
+          echo "${{ env.TEMP_SSH_PUBLIC_KEY }}" > temp-ssh-key.pub
+          oci compute instance update \
+            --instance-id "${{ env.INSTANCE_OCID }}" \
+            --metadata "{\"ssh_authorized_keys\": \"${{ env.TEMP_SSH_PUBLIC_KEY }}\"}" \
+            --auth instance_principal \
+            --region "$OCI_REGION" \
+            --force >> "$LOG_FILE" 2>&1 || {
+            echo "Error: Failed to update instance metadata" | tee -a "$LOG_FILE"
             exit 1
           }
+          echo "Instance metadata updated successfully" | tee -a "$LOG_FILE"
       - name: Verify SSH Key Before Connection
         run: |
           LOG_FILE="/tmp/ssh_debug_$(date +%F_%H-%M-%S).log"
@@ -467,7 +445,7 @@ jobs:
             cat "$LOG_FILE"
             exit 1
           fi
-      - name: Debug Secrets Availability
+      - name: Pre-check Secrets Injection
         env:
           TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
           USER_SECRET_OCID: ${{ secrets.USER_SECRET_OCID }}
@@ -475,19 +453,20 @@ jobs:
           API_SECRET_OCID: ${{ secrets.API_SECRET_OCID }}
         shell: bash
         run: |
-          set -e
-          LOG_FILE="/tmp/cd3_debug_$(date +%F_%H-%M-%S).log"
-          echo "Debugging secrets availability" | tee -a "$LOG_FILE"
-          for VAR in TENANCY_SECRET_OCID USER_SECRET_OCID FINGERPRINT_SECRET_OCID API_SECRET_OCID; do
-            if [ ! -z "${!VAR+x}" ]; then
-              echo "$VAR is set: 1" | tee -a "$LOG_FILE"
-            else
-              echo "$VAR is set: 0" | tee -a "$LOG_FILE"
+          LOG_FILE="/tmp/secret_precheck_$(date +%F_%H-%M-%S).log"
+          for SECRET_NAME in TENANCY_SECRET_OCID USER_SECRET_OCID FINGERPRINT_SECRET_OCID API_SECRET_OCID; do
+            eval SECRET_VALUE=\$$SECRET_NAME
+            if [ -z "${SECRET_VALUE+x}" ]; then
+              echo "Error: $SECRET_NAME is not injected" | tee -a "$LOG_FILE"
+              exit 1
             fi
-            echo "$VAR length: ${#${!VAR}}" | tee -a "$LOG_FILE"
+            if [ -z "$SECRET_VALUE" ]; then
+              echo "Error: $SECRET_NAME is injected but empty" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+            echo "$SECRET_NAME is injected and non-empty" | tee -a "$LOG_FILE"
           done
-          echo "Environment variables (masked):" | tee -a "$LOG_FILE"
-          env | grep -E 'TENANCY_SECRET_OCID|USER_SECRET_OCID|FINGERPRINT_SECRET_OCID|API_SECRET_OCID' | tee -a "$LOG_FILE" || echo "No relevant variables found" | tee -a "$LOG_FILE"
+          echo "Secrets pre-check logged to $LOG_FILE"
       - name: Setup CD3 Automation Toolkit
         env:
           TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
@@ -548,7 +527,7 @@ jobs:
           CONTAINER_NAME="cd3_toolkit"
           OUTDIR_STRUCTURE_FILE="/cd3user/oci_tools/cd3_automation_toolkit/user-scripts/outdir_structure_file.properties"
           TF_OR_TOFU="terraform"
-          SSH_PUBLIC_KEY="${{ inputs.ssh_public_key || env.TEMP_SSH_PUBLIC_KEY }}"
+          SSH_PUBLIC_KEY="${{ env.TEMP_SSH_PUBLIC_KEY }}"
           CONFIG_FILE="/cd3user/oci_tools/cd3_automation_toolkit/user-scripts/tenancyconfig.properties"
           KEY_DEST_PATH="/cd3user/tenancies/keys/oci_api_private.pem"
           cat << EOF > /tmp/tenancyconfig.properties
@@ -602,14 +581,9 @@ jobs:
             exit 1
           fi
       - name: Cleanup SSH Key
-        if: success()
+        if: always()
         run: |
-          LOG_FILE="/tmp/cleanup_$(date +%F_%H-%M-%S).log"
-          echo "Cleaning up SSH keys" | tee -a "$LOG_FILE"
-          if [ -f ~/.ssh/temp-id_rsa ]; then
-            rm -f ~/.ssh/temp-id_rsa
-            echo "Deleted ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
-          else
-            echo "No SSH key found at ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
-          fi
+          LOG_FILE="/tmp/cleanup_bootstrap_$(date +%F_%H-%M-%S).log"
+          echo "Cleaning up SSH keys in CD3_Bootstrap" | tee -a "$LOG_FILE"
+          rm -f ~/.ssh/temp-id_rsa temp-ssh-key.txt temp-ssh-key.pub 2>>"$LOG_FILE" || echo "No SSH keys to delete" | tee -a "$LOG_FILE"
           echo "Cleanup complete" | tee -a "$LOG_FILE"
