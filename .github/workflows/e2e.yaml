@@ -318,7 +318,7 @@ jobs:
           CD3_TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
           CD3_USER_SECRET_OCID: ${{ secrets.USER_SECRET_OCID }}
           CD3_FINGERPRINT_SECRET_OCID: ${{ secrets.FINGERPRINT_SECRET_OCID }}
-          CD3_API_KEY_SECRET_OCID: ${{ secrets.API_KEY_SECRET_OCID }}
+          CD3_API_KEY_SECRET_OCID: ${{ secrets.API_SECRET_OCID }}
         run: |
           set -e
           LOG_FILE="/tmp/cd3_setup_$(date +%F_%H-%M-%S).log"
