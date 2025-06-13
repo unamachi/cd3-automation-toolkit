@@ -382,7 +382,7 @@ jobs:
           done
       - name: Setup CD3 Automation Toolkit
         env:
-          TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID
+          TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
           USER_SECRET_OCID: ${{ secrets.USER_SECRET_OCID }}
           FINGERPRINT_SECRET_OCID: ${{ secrets.FINGERPRINT_SECRET_OCID }}
           API_SECRET_OCID: ${{ secrets.API_SECRET_OCID }}
