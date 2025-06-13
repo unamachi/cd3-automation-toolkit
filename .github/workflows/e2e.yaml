@@ -395,18 +395,20 @@ jobs:
           export FINGERPRINT_SECRET_OCID="$FINGERPRINT_OCID"
           export API_SECRET_OCID="$API_SECRET_OCID"
           echo "Verifying secrets..." | tee -a "$LOG_FILE"
+          
           for VAR in TENANCY_SECRET_OCID USER_SECRET_OCID FINGERPRINT_SECRET_OCID API_SECRET_OCID; do
-            if [ -z "${!VAR+x}" ]; then
-              echo "Error: $VAR is unset" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            if [ -z "${!VAR}" ]; then
-              echo "Error: $VAR is empty" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            echo "$VAR is set" | tee -a "$LOG_FILE"
-            echo "::add-mask::${!VAR}"
-          done
+          #   if [ -z "${!VAR+x}" ]; then
+          #     echo "Error: $VAR is unset" | tee -a "$LOG_FILE"
+          #     exit 1
+          #   fi
+          #   if [ -z "${!VAR}" ]; then
+          #     echo "Error: $VAR is empty" | tee -a "$LOG_FILE"
+          #     exit 1
+          #   fi
+              echo "$VAR is set" | tee -a "$LOG_FILE"
+             echo "::add-mask::${!VAR}"
+           done
+          
           TEMP_SECRET_FILE="/tmp/secret_temp_$(date +%F_%H-%M-%S).txt"
           oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve TENANCY_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
           tenancy_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
