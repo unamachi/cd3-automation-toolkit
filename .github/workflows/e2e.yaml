@@ -212,11 +212,11 @@ jobs:
             echo "Waiting 60 seconds before next check..."
             sleep 60
           done
-          CD3_PUBLIC_IP=$(oci compute instance list-vnics \
-                          --instance-id "$INSTANCE_OCID" \
+          CD3_PUBLIC_IP=$(oci resource-manager job-output-summary list-job-outputs \
+                          --job-id "$JOB_ID" \
                           --auth instance_principal \
                           --region "$OCI_REGION" \
-                          --query 'data[0]."public-ip"' \
+                          --query 'data.items[?"output-name"==`CD3_Automation_VM_Public_IP`]."output-value" | [0]' \
                           --raw-output 2>/dev/null)
           echo "CD3_Automation_VM_Public_IP=$CD3_PUBLIC_IP" >> $GITHUB_OUTPUT
 
