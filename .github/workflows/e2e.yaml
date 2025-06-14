@@ -544,8 +544,8 @@ jobs:
                 rm -f /tmp/oci_api_private.pem /tmp/tenancyconfig.properties 2>/dev/null
                 echo "Cleaned up temporary files" >> "$LOG_FILE"
           
-      - name: Cleanup SSH Key
-        if: success()
-        run: |
-          rm -f ~/.ssh/temp-id_rsa
-          echo "Temporary SSH keys deleted"
+      # - name: Cleanup SSH Key
+      #   if: success()
+      #   run: |
+      #     rm -f ~/.ssh/temp-id_rsa
+      #     echo "Temporary SSH keys deleted"
