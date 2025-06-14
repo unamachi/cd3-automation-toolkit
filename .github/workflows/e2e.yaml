@@ -17,13 +17,10 @@ jobs:
     outputs:
       stack_id: ${{ steps.create-stack.outputs.stack_id }}
       instance_ocid: ${{ steps.get-instance-ocid.outputs.instance_ocid }}
+      public_ip: ${{ steps.apply-stack.outputs.public_ip }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Print runner info
-        run: |
-          echo "Running on $(hostname)"
-          uname -a
       - name: Verify Python installation
         run: |
           python3 --version
@@ -215,6 +212,15 @@ jobs:
             echo "Waiting 60 seconds before next check..."
             sleep 60
           done
+          #Fetch public_ip if exists
+          PUBLIC_IP=$(oci compute instance list-vnics \
+            --instance-id "$INSTANCE_OCID" \
+            --auth instance_principal \
+            --region "$OCI_REGION" \
+            --query "data[0].\"public-ip\"" \
+            --raw-output 2>/dev/null)
+          echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
+
       - name: Get Instance OCID
         id: get-instance-ocid
         env:
@@ -239,8 +245,8 @@ jobs:
           rm -f cd3_stack.zip
           rm -f temp-ssh-key temp-ssh-key.pub temp-ssh-key.txt
           rm -rf "$GITHUB_WORKSPACE/stack_id.txt"
-      - name: Say hello
-        run: echo "✅ Self-hosted runner is working!"
+      - name: Deploy RM Stack
+        run: echo "✅ Deploy RM stack is completed successfully...!"
 
   CD3_Bootstrap:
     runs-on: self-hosted
@@ -523,8 +529,19 @@ jobs:
                     exit 1
                   fi
                 done
+                
                 ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID ls -l /cd3user/tenancies/$PREFIX/" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list output directory" | tee -a "$LOG_FILE"; exit 1; }
+                echo "Starting Jenkins in container..." | tee -a "$LOG_FILE"
+                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID bash -c '/usr/share/jenkins/jenkins.sh &'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to start Jenkins in container" | tee -a "$LOG_FILE"; exit 1; }
+                echo "Jenkins started in container" | tee -a "$LOG_FILE"
+                PUBLIC_IP="${{ needs.Deploy_RM_Stack.outputs.public_ip }}"
+                if [ -n "$PUBLIC_IP" ] && [ "$PUBLIC_IP" != "null" ]; then
+                  echo "Access Jenkins at https://$PUBLIC_IP:8443" | tee -a "$LOG_FILE"
+                else
+                  echo "Access Jenkins at https://<public_ip>:8443" | tee -a "$LOG_FILE"
+                fi
                 echo "Setup complete. Output files logged to $LOG_FILE" | tee -a "$LOG_FILE"
+                
                 rm -f /tmp/oci_api_private.pem /tmp/tenancyconfig.properties 2>/dev/null
                 echo "Cleaned up temporary files" >> "$LOG_FILE"
           
