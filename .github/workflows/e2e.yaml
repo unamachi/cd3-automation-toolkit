@@ -212,12 +212,12 @@ jobs:
             echo "Waiting 60 seconds before next check..."
             sleep 60
           done
-          CD3_PUBLIC_IP=$(oci resource-manager job get \
-          --job-id "$JOB_ID" \
-          --auth instance_principal \
-          --region "$OCI_REGION" \
-          --query 'data."job-outputs"[?name==`CD3_Automation_VM_Public_IP`].value' \
-          --raw-output 2>/dev/null)
+          CD3_PUBLIC_IP=$(oci compute instance list-vnics \
+                          --instance-id "$INSTANCE_OCID" \
+                          --auth instance_principal \
+                          --region "$OCI_REGION" \
+                          --query 'data[0]."public-ip"' \
+                          --raw-output 2>/dev/null)
           echo "CD3_Automation_VM_Public_IP=$CD3_PUBLIC_IP" >> $GITHUB_OUTPUT
 
       - name: Get Instance OCID
@@ -531,13 +531,13 @@ jobs:
                 
                 ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID ls -l /cd3user/tenancies/$PREFIX/" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list output directory" | tee -a "$LOG_FILE"; exit 1; }
                 echo "Starting Jenkins in container..." | tee -a "$LOG_FILE"
-                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID bash -c '/usr/share/jenkins/jenkins.sh &'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to start Jenkins in container" | tee -a "$LOG_FILE"; exit 1; }
+                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID bash -c 'nohup /usr/share/jenkins/jenkins.sh > /cd3user/jenkins.log 2>&1 & sleep 20; ps aux | grep -q "[j]enkins" || { echo "Jenkins failed to start"; exit 1; }'"
                 echo "Jenkins started in container" | tee -a "$LOG_FILE"
                 PUBLIC_IP="${{ needs.Deploy_RM_Stack.outputs.public_ip }}"
                 if [ -n "$PUBLIC_IP" ] && [ "$PUBLIC_IP" != "null" ]; then
-                  echo "Access Jenkins at https://$PUBLIC_IP:8443" | tee -a "$LOG_FILE"
+                  echo "Access Jenkins at https://$:8443" | tee -a "$LOG_FILE"
                 else
-                  echo "Access Jenkins at https://<public_ip>:8443" | tee -a "$LOG_FILE"
+                  echo "Access Jenkins at https://<>:8443" | tee -a "$LOG_FILE"
                 fi
                 echo "Setup complete. Output files logged to $LOG_FILE" | tee -a "$LOG_FILE"
                 
