@@ -17,7 +17,7 @@ jobs:
     outputs:
       stack_id: ${{ steps.create-stack.outputs.stack_id }}
       instance_ocid: ${{ steps.get-instance-ocid.outputs.instance_ocid }}
-      public_ip: ${{ steps.apply-stack.outputs.public_ip }}
+      public_ip: ${{ steps.apply-stack.outputs.CD3_Automation_VM_Public_IP }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -212,14 +212,13 @@ jobs:
             echo "Waiting 60 seconds before next check..."
             sleep 60
           done
-          #Fetch public_ip if exists
-          PUBLIC_IP=$(oci compute instance list-vnics \
-            --instance-id "$INSTANCE_OCID" \
-            --auth instance_principal \
-            --region "$OCI_REGION" \
-            --query "data[0].\"public-ip\"" \
-            --raw-output 2>/dev/null)
-          echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
+          CD3_PUBLIC_IP=$(oci resource-manager job get \
+          --job-id "$JOB_ID" \
+          --auth instance_principal \
+          --region "$OCI_REGION" \
+          --query 'data."job-outputs"[?name==`CD3_Automation_VM_Public_IP`].value' \
+          --raw-output 2>/dev/null)
+          echo "CD3_Automation_VM_Public_IP=$CD3_PUBLIC_IP" >> $GITHUB_OUTPUT
 
       - name: Get Instance OCID
         id: get-instance-ocid
