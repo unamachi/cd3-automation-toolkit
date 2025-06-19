@@ -582,7 +582,7 @@ jobs:
           PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
           CONTAINER_NAME="cd3_toolkit"
           EXCEL_DEST_PATH="/cd3user/tenancies/$PREFIX/cd3_files/CD3-Blank-template.xlsx"
-          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no testing/excel_files/CD3-Blank-template.xlsx opc@${{ env.INSTANCE_IP }}:/tmp/CD3-Blank-template.xlsx 2>>"$LOG_FILE" || { echo "Error: Failed to SCP Excel file" | tee -a "$LOG_FILE"; exit 1; }
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no testing/excel/CD3-Blank-template.xlsx opc@${{ env.INSTANCE_IP }}:/tmp/CD3-Blank-template.xlsx 2>>"$LOG_FILE" || { echo "Error: Failed to SCP Excel file" | tee -a "$LOG_FILE"; exit 1; }
           ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME mkdir -p /cd3user/tenancies/$PREFIX/cd3_files" 2>>"$LOG_FILE" || { echo "Error: Failed to create Excel directory in container" | tee -a "$LOG_FILE"; exit 1; }
           ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/CD3-Blank-template.xlsx $CONTAINER_NAME:$EXCEL_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy Excel file to container" | tee -a "$LOG_FILE"; exit 1; }
           ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/CD3-Blank-template.xlsx" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary Excel file" | tee -a "$LOG_FILE"; exit 1; }
