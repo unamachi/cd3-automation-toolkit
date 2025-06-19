@@ -590,94 +590,160 @@ jobs:
 
       - name: Create setUpOCI Properties File
         env:
-                TENANCY_OCID_SECRET: ${{ secrets.TENANCY_OCID_SECRET }}
-                USER_OCID_SECRET: ${{ secrets.USER_OCID_SECRET }}
-                FINGERPRINT_SECRET_OCID: ${{ secrets.FINGERPRINT_SECRET_OCID }}
-                COMPARTMENT_OCID_SECRET: ${{ secrets.COMPARTMENT_OCID_SECRET }}
+                  TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
+                  USER_SECRET_OCID: ${{ secrets.USER_SECRET_OCID }}
+                  FINGERPRINT_SECRET_OCID: ${{ secrets.FINGERPRINT_SECRET_OCID }}
+                  API_SECRET_OCID: ${{ secrets.API_SECRET_OCID }}
+                  COMPARTMENT_SECRET_OCID: ${{ secrets.COMPARTMENT_SECRET_OCID }}
         run: |
-                LOG_FILE="/tmp/cd3_properties_$(date +%F_%H-%M-%S).log"
-                PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
-                CONTAINER_NAME="cd3_toolkit"
-                PROPERTIES_DEST_PATH="/cd3user/tenancies/$PREFIX/config/${PREFIX}_setUpOCI.properties"
-                OCI_CONFIG_DEST_PATH="/cd3user/tenancies/$PREFIX/config/oci_config"
-                KEY_DEST_PATH="/cd3user/tenancies/keys/oci_api_private.pem"
-                TEMP_SECRET_FILE="/tmp/secret_temp_$(date +%F_%H-%M-%S).txt"
-                oci secrets secret-bundle get --secret-id "$TENANCY_OCID_SECRET" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null
-                tenancy_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
-                oci secrets secret-bundle get --secret-id "$USER_OCID_SECRET" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null
-                user_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
-                oci secrets secret-bundle get --secret-id "$FINGERPRINT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null
-                fingerprint=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
-                oci secrets secret-bundle get --secret-id "$COMPARTMENT_OCID_SECRET" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null
-                compartment_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
-                rm -f "$TEMP_SECRET_FILE" 2>/dev/null
-                # Create OCI config file
-                cat << EOF > /tmp/oci_config
-                [DEFAULT]
-                user=$user_ocid
-                fingerprint=$fingerprint
-                tenancy=$tenancy_ocid
-                region=us-phoenix-1
-                key_file=$KEY_DEST_PATH
-                EOF
-                chmod 600 /tmp/oci_config 2>/dev/null
-                # Create setUpOCI properties file
-                cat << EOF > /tmp/${PREFIX}_setUpOCI.properties
-                [Default]
-                workflow_type=create_resources
-                cd3file=/cd3user/tenancies/$PREFIX/cd3_files/CD3-Blank-template.xlsx
-                outdir=/cd3user/tenancies/$PREFIX/terraform_files
-                prefix=$PREFIX
-                auth_mechanism=api_key
-                config_file=$OCI_CONFIG_DEST_PATH
-                tenancy_ocid=$tenancy_ocid
-                user_ocid=$user_ocid
-                fingerprint=$fingerprint
-                compartment_ocid=$compartment_ocid
-                region=us-phoenix-1
-                tf_or_tofu=terraform
-                EOF
-                chmod 600 /tmp/${PREFIX}_setUpOCI.properties 2>/dev/null
-                # Copy OCI config to instance
-                scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_config opc@${{ env.INSTANCE_IP }}:/tmp/oci_config 2>>"$LOG_FILE" || { echo "Error: Failed to SCP OCI config file" | tee -a "$LOG_FILE"; exit 1; }
-                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME mkdir -p /cd3user/tenancies/$PREFIX/config" 2>>"$LOG_FILE" || { echo "Error: Failed to create config directory in container" | tee -a "$LOG_FILE"; exit 1; }
-                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/oci_config $CONTAINER_NAME:$OCI_CONFIG_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy OCI config to container" | tee -a "$LOG_FILE"; exit 1; }
-                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/oci_config" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary OCI config file" | tee -a "$LOG_FILE"; exit 1; }
-                # Copy setUpOCI properties to instance
-                scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/${PREFIX}_setUpOCI.properties opc@${{ env.INSTANCE_IP }}:/tmp/${PREFIX}_setUpOCI.properties 2>>"$LOG_FILE" || { echo "Error: Failed to SCP properties file" | tee -a "$LOG_FILE"; exit 1; }
-                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/${PREFIX}_setUpOCI.properties $CONTAINER_NAME:$PROPERTIES_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy properties file to container" | tee -a "$LOG_FILE"; exit 1; }
-                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/${PREFIX}_setUpOCI.properties" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary properties file" | tee -a "$LOG_FILE"; exit 1; }
-                echo "Properties file copied to container at $PROPERTIES_DEST_PATH" | tee -a "$LOG_FILE"
-                echo "OCI config file copied to container at $OCI_CONFIG_DEST_PATH" | tee -a "$LOG_FILE"
+                  LOG_FILE="/tmp/cd3_properties_$(date +%F_%H-%M-%S).log"
+                  touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
+                  echo "Starting Create setUpOCI Properties File step at $(date)" | tee -a "$LOG_FILE"
+                  PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+                  CONTAINER_NAME="cd3_toolkit"
+                  PROPERTIES_DEST_PATH="/cd3user/tenancies/$PREFIX/config/${PREFIX}_setUpOCI.properties"
+                  OCI_CONFIG_DEST_PATH="/cd3user/tenancies/$PREFIX/config/oci_config"
+                  KEY_DEST_PATH="/cd3user/tenancies/keys/oci_api_private.pem"
+                  TEMP_SECRET_FILE="/tmp/secret_temp_$(date +%F_%H-%M-%S).txt"
+                  # Check if secrets are set
+                  echo "Checking GitHub Secrets..." | tee -a "$LOG_FILE"
+                  for SECRET in TENANCY_SECRET_OCID USER_SECRET_OCID FINGERPRINT_SECRET_OCID API_SECRET_OCID COMPARTMENT_SECRET_OCID; do
+                    if [ -z "${!SECRET+x}" ]; then
+                      echo "Error: $SECRET is unset" | tee -a "$LOG_FILE"
+                      exit 1
+                    fi
+                    if [ -z "${!SECRET}" ]; then
+                      echo "Error: $SECRET is empty" | tee -a "$LOG_FILE"
+                      exit 1
+                    fi
+                    echo "$SECRET is set" | tee -a "$LOG_FILE"
+                  done
+                  # Verify OCI CLI and instance principal
+                  echo "Verifying OCI CLI..." | tee -a "$LOG_FILE"
+                  oci --version >> "$LOG_FILE" 2>&1 || { echo "Error: OCI CLI not installed or failed" | tee -a "$LOG_FILE"; exit 1; }
+                  oci iam compartment list --auth instance_principal --region us-phoenix-1 --query "data[0].id" --raw-output >> "$LOG_FILE" 2>&1 || { echo "Error: Instance principal authentication failed" | tee -a "$LOG_FILE"; exit 1; }
+                  # Retrieve and validate secrets
+                  for SECRET_NAME in TENANCY_SECRET_OCID USER_SECRET_OCID FINGERPRINT_SECRET_OCID COMPARTMENT_SECRET_OCID API_SECRET_OCID; do
+                    echo "Retrieving $SECRET_NAME..." | tee -a "$LOG_FILE"
+                    oci secrets secret-bundle get --secret-id "${!SECRET_NAME}" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || {
+                      echo "Error: Failed to retrieve $SECRET_NAME" | tee -a "$LOG_FILE"
+                      cat "$LOG_FILE"
+                      exit 1
+                    }
+                    if [ ! -s "$TEMP_SECRET_FILE" ]; then
+                      echo "Error: $SECRET_NAME retrieved but file is empty" | tee -a "$LOG_FILE"
+                      exit 1
+                    }
+                    VALUE=$(base64 --decode "$TEMP_SECRET_FILE" 2>>"$LOG_FILE") || {
+                      echo "Error: Failed to decode $SECRET_NAME" | tee -a "$LOG_FILE"
+                      cat "$LOG_FILE"
+                      exit 1
+                    }
+                    if [ -z "$VALUE" ]; then
+                      echo "Error: Decoded $SECRET_NAME is empty" | tee -a "$LOG_FILE"
+                      exit 1
+                    }
+                    echo "$SECRET_NAME decoded successfully" | tee -a "$LOG_FILE"
+                    case $SECRET_NAME in
+                      TENANCY_SECRET_OCID) tenancy_ocid=$VALUE ;;
+                      USER_SECRET_OCID) user_ocid=$VALUE ;;
+                      FINGERPRINT_SECRET_OCID) fingerprint=$VALUE ;;
+                      COMPARTMENT_SECRET_OCID) compartment_ocid=$VALUE ;;
+                      API_SECRET_OCID)
+                        echo "$VALUE" > /tmp/oci_api_private.pem
+                        chmod 600 /tmp/oci_api_private.pem 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on private key" | tee -a "$LOG_FILE"; exit 1; }
+                        ;;
+                    esac
+                  done
+                  rm -f "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || echo "Warning: Failed to remove $TEMP_SECRET_FILE" | tee -a "$LOG_FILE"
+                  # Create OCI config file
+                  echo "Creating OCI config file..." | tee -a "$LOG_FILE"
+                  cat << EOF > /tmp/oci_config
+                  [DEFAULT]
+                  user=$user_ocid
+                  fingerprint=$fingerprint
+                  tenancy=$tenancy_ocid
+                  region=us-phoenix-1
+                  key_file=$KEY_DEST_PATH
+                  EOF
+                  chmod 600 /tmp/oci_config 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on oci_config" | tee -a "$LOG_FILE"; exit 1; }
+                  if [ ! -f /tmp/oci_config ]; then
+                    echo "Error: OCI config file not created" | tee -a "$LOG_FILE"
+                    exit 1
+                  fi
+                  ls -l /tmp/oci_config >> "$LOG_FILE"
+                  # Create setUpOCI properties file
+                  echo "Creating setUpOCI properties file..." | tee -a "$LOG_FILE"
+                  cat << EOF > /tmp/${PREFIX}_setUpOCI.properties
+                  [Default]
+                  workflow_type=create_resources
+                  cd3file=/cd3user/tenancies/$PREFIX/cd3_files/CD3-Blank-template.xlsx
+                  outdir=/cd3user/tenancies/$PREFIX/terraform_files
+                  prefix=$PREFIX
+                  auth_mechanism=api_key
+                  config_file=$OCI_CONFIG_DEST_PATH
+                  tenancy_ocid=$tenancy_ocid
+                  user_ocid=$user_ocid
+                  fingerprint=$fingerprint
+                  compartment_ocid=$compartment_ocid
+                  region=us-phoenix-1
+                  tf_or_tofu=terraform
+                  EOF
+                  chmod 600 /tmp/${PREFIX}_setUpOCI.properties 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on properties file" | tee -a "$LOG_FILE"; exit 1; }
+                  if [ ! -f /tmp/${PREFIX}_setUpOCI.properties ]; then
+                    echo "Error: Properties file not created" | tee -a "$LOG_FILE"
+                    exit 1
+                  fi
+                  ls -l /tmp/${PREFIX}_setUpOCI.properties >> "$LOG_FILE"
+                  # Copy private key to instance
+                  echo "Copying private key to instance..." | tee -a "$LOG_FILE"
+                  scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no -v /tmp/oci_api_private.pem opc@${{ env.INSTANCE_IP }}:/tmp/oci_api_private.pem >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to SCP private key file" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME mkdir -p /cd3user/tenancies/keys" 2>>"$LOG_FILE" || { echo "Error: Failed to create keys directory in container" | tee -a "$LOG_FILE"; exit 1; }
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/oci_api_private.pem $CONTAINER_NAME:$KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy private key to container" | tee -a "$LOG_FILE"; exit 1; }
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME chmod 600 $KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on private key in container" | tee -a "$LOG_FILE"; exit 1; }
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/oci_api_private.pem" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary private key file" | tee -a "$LOG_FILE"; exit 1; }
+                  # Copy OCI config to instance
+                  echo "Copying OCI config to instance..." | tee -a "$LOG_FILE"
+                  scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no -v /tmp/oci_config opc@${{ env.INSTANCE_IP }}:/tmp/oci_config >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to SCP OCI config file" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME mkdir -p /cd3user/tenancies/$PREFIX/config" 2>>"$LOG_FILE" || { echo "Error: Failed to create config directory in container" | tee -a "$LOG_FILE"; exit 1; }
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/oci_config $CONTAINER_NAME:$OCI_CONFIG_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy OCI config to container" | tee -a "$LOG_FILE"; exit 1; }
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/oci_config" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary OCI config file" | tee -a "$LOG_FILE"; exit 1; }
+                  # Copy setUpOCI properties to instance
+                  echo "Copying setUpOCI properties to instance..." | tee -a "$LOG_FILE"
+                  scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no -v /tmp/${PREFIX}_setUpOCI.properties opc@${{ env.INSTANCE_IP }}:/tmp/${PREFIX}_setUpOCI.properties >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to SCP properties file" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/${PREFIX}_setUpOCI.properties $CONTAINER_NAME:$PROPERTIES_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy properties file to container" | tee -a "$LOG_FILE"; exit 1; }
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/${PREFIX}_setUpOCI.properties" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary properties file" | tee -a "$LOG_FILE"; exit 1; }
+                  echo "Properties file copied to container at $PROPERTIES_DEST_PATH" | tee -a "$LOG_FILE"
+                  echo "OCI config file copied to container at $OCI_CONFIG_DEST_PATH" | tee -a "$LOG_FILE"
 
       - name: Run Create Workflow for Services
         run: |
-                LOG_FILE="/tmp/cd3_create_workflow_$(date +%F_%H-%M-%S).log"
-                PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
-                CONTAINER_NAME="cd3_toolkit"
-                PROPERTIES_PATH="/cd3user/tenancies/$PREFIX/config/${PREFIX}_setUpOCI.properties"
-                # Validate JSON
-                jq . /tmp/service_options.json >> "$LOG_FILE" 2>&1 || { echo "Error: Invalid JSON in service_options" | tee -a "$LOG_FILE"; exit 1; }
-                # Check if JSON is empty
-                if [ "$(jq 'length' /tmp/service_options.json)" -eq 0 ]; then
-                  echo "No services selected, skipping create workflow" | tee -a "$LOG_FILE"
-                  exit 0
-                fi
-                # Iterate over main_options
-                jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
-                  echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
-                  # Get sub_options as comma-separated string
-                  sub_options=$(jq -r --arg main_option "$main_option" '.[$main_option] | join(",")' /tmp/service_options.json)
-                  if [ -z "$sub_options" ]; then
-                    echo "Warning: No sub_options defined for $main_option, skipping" | tee -a "$LOG_FILE"
-                    continue
-                  fi
-                  echo "Sub-options for $main_option: $sub_options" | tee -a "$LOG_FILE"
-                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=True --main_options=\"$main_option\" --sub_options=\"$sub_options\"'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run create workflow for $main_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
-                  echo "Create workflow completed for $main_option" | tee -a "$LOG_FILE"
-                done
-                rm -f /tmp/service_options.json
-                echo "Create workflow completed successfully for all services" | tee -a "$LOG_FILE"
+                        LOG_FILE="/tmp/cd3_create_workflow_$(date +%F_%H-%M-%S).log"
+                        PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+                        CONTAINER_NAME="cd3_toolkit"
+                        PROPERTIES_PATH="/cd3user/tenancies/$PREFIX/config/${PREFIX}_setUpOCI.properties"
+                        # Validate JSON
+                        jq . /tmp/service_options.json >> "$LOG_FILE" 2>&1 || { echo "Error: Invalid JSON in service_options" | tee -a "$LOG_FILE"; exit 1; }
+                        # Check if JSON is empty
+                        if [ "$(jq 'length' /tmp/service_options.json)" -eq 0 ]; then
+                          echo "No services selected, skipping create workflow" | tee -a "$LOG_FILE"
+                          exit 0
+                        fi
+                        # Iterate over main_options
+                        jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
+                          echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
+                          # Get sub_options as comma-separated string
+                          sub_options=$(jq -r --arg main_option "$main_option" '.[$main_option] | join(",")' /tmp/service_options.json)
+                          if [ -z "$sub_options" ]; then
+                            echo "Warning: No sub_options defined for $main_option, skipping" | tee -a "$LOG_FILE"
+                            continue
+                          fi
+                          echo "Sub-options for $main_option: $sub_options" | tee -a "$LOG_FILE"
+                          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=True --main_options=\"$main_option\" --sub_options=\"$sub_options\"'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run create workflow for $main_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+                          echo "Create workflow completed for $main_option" | tee -a "$LOG_FILE"
+                        done
+                        rm -f /tmp/service_options.json
+                        echo "Create workflow completed successfully for all services" | tee -a "$LOG_FILE"
 
       - name: Cleanup SSH Key
         if: success()
