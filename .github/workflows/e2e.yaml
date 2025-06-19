@@ -10,7 +10,39 @@ on:
       prefix:
         description: 'Custom prefix for tenancy config (default: <branch>-<run_id>)'
         required: false
-
+      identity_sub_options:
+        description: 'Identity sub-options'
+        type: choice
+        required: false
+        default: 'None'
+        options:
+          - None
+          - Add/Modify/Delete Compartments
+          - Add/Modify/Delete Groups
+          - Add/Modify/Delete Policies
+          - Add/Modify/Delete Users
+          - Add/Modify/Delete Network Sources
+          - Add/Modify/Delete Compartments,Add/Modify/Delete Groups
+          - Add/Modify/Delete Compartments,Add/Modify/Delete Policies
+          - Add/Modify/Delete Groups,Add/Modify/Delete Policies
+      governance_sub_options:
+        description: 'Governance sub-options'
+        type: choice
+        required: false
+        default: 'None'
+        options:
+          - None
+          - Tags
+          - Quotas
+          - Tags,Quotas
+      cost_management_sub_options:
+        description: 'Cost Management sub-options'
+        type: choice
+        required: false
+        default: 'None'
+        options:
+          - None
+          - Budgets
 jobs:
   Deploy_RM_Stack:
     runs-on: [self-hosted]
@@ -219,7 +251,6 @@ jobs:
                           --query 'data.items[?"output-name"==`CD3_Automation_VM_Public_IP`]."output-value" | [0]' \
                           --raw-output 2>/dev/null)
           echo "CD3_Automation_VM_Public_IP=$CD3_PUBLIC_IP" >> $GITHUB_OUTPUT
-
       - name: Get Instance OCID
         id: get-instance-ocid
         env:
@@ -544,8 +575,131 @@ jobs:
                 rm -f /tmp/oci_api_private.pem /tmp/tenancyconfig.properties 2>/dev/null
                 echo "Cleaned up temporary files" >> "$LOG_FILE"
           
-      # - name: Cleanup SSH Key
-      #   if: success()
-      #   run: |
-      #     rm -f ~/.ssh/temp-id_rsa
-      #     echo "Temporary SSH keys deleted"
+#Changes for running the workflow
+      - name: Copy Excel File to CD3 Instance
+        run: |
+          LOG_FILE="/tmp/cd3_excel_$(date +%F_%H-%M-%S).log"
+          PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+          CONTAINER_NAME="cd3_toolkit"
+          EXCEL_DEST_PATH="/cd3user/tenancies/$PREFIX/cd3_files/CD3-Blank-template.xlsx"
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no testing/excel_files/CD3-Blank-template.xlsx opc@${{ env.INSTANCE_IP }}:/tmp/CD3-Blank-template.xlsx 2>>"$LOG_FILE" || { echo "Error: Failed to SCP Excel file" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME mkdir -p /cd3user/tenancies/$PREFIX/cd3_files" 2>>"$LOG_FILE" || { echo "Error: Failed to create Excel directory in container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/CD3-Blank-template.xlsx $CONTAINER_NAME:$EXCEL_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy Excel file to container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/CD3-Blank-template.xlsx" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary Excel file" | tee -a "$LOG_FILE"; exit 1; }
+          echo "Excel file copied to container at $EXCEL_DEST_PATH" | tee -a "$LOG_FILE"
+
+      - name: Create setUpOCI Properties File
+        env:
+          TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
+          USER_SECRET_OCID: ${{ secrets.USER_SECRET_OCID }}
+          FINGERPRINT_SECRET_OCID: ${{ secrets.FINGERPRINT_SECRET_OCID }}
+          COMPARTMENT_SECRET_OCID: ${{ secrets.COMPARTMENT_SECRET_OCID }}
+        run: |
+          LOG_FILE="/tmp/cd3_properties_$(date +%F_%H-%M-%S).log"
+          PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+          CONTAINER_NAME="cd3_toolkit"
+          PROPERTIES_DEST_PATH="/cd3user/tenancies/$PREFIX/config/${PREFIX}_setUpOCI.properties"
+          TEMP_SECRET_FILE="/tmp/secret_temp_$(date +%F_%H-%M-%S).txt"
+          oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null
+          tenancy_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
+          oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null
+          user_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
+          oci secrets secret-bundle get --secret-id "$FINGERPRINT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null
+          fingerprint=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
+          oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null
+          compartment_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
+          rm -f "$TEMP_SECRET_FILE" 2>/dev/null
+          cat << EOF > /tmp/${PREFIX}_setUpOCI.properties
+          [Default]
+          workflow_type=create_resources
+          cd3file=/cd3user/tenancies/$PREFIX/cd3_files/CD3-Blank-template.xlsx
+          outdir=/cd3user/tenancies/$PREFIX/terraform_files
+          prefix=$PREFIX
+          auth_mechanism=api_key
+          config_file=/cd3user/tenancies/keys/oci_api_private.pem
+          tenancy_ocid=$tenancy_ocid
+          user_ocid=$user_ocid
+          fingerprint=$fingerprint
+          compartment_ocid=$compartment_ocid
+          region=us-phoenix-1
+          tf_or_tofu=terraform
+          EOF
+          chmod 600 /tmp/${PREFIX}_setUpOCI.properties 2>/dev/null
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/${PREFIX}_setUpOCI.properties opc@${{ env.INSTANCE_IP }}:/tmp/${PREFIX}_setUpOCI.properties 2>>"$LOG_FILE" || { echo "Error: Failed to SCP properties file" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME mkdir -p /cd3user/tenancies/$PREFIX/config" 2>>"$LOG_FILE" || { echo "Error: Failed to create config directory in container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/${PREFIX}_setUpOCI.properties $CONTAINER_NAME:$PROPERTIES_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy properties file to container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/${PREFIX}_setUpOCI.properties" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary properties file" | tee -a "$LOG_FILE"; exit 1; }
+          echo "Properties file copied to container at $PROPERTIES_DEST_PATH" | tee -a "$LOG_FILE"
+
+      - name: Fetch Compartments OCIDs
+        run: |
+          LOG_FILE="/tmp/cd3_fetch_compartments_$(date +%F_%H-%M-%S).log"
+          PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+          CONTAINER_NAME="cd3_toolkit"
+          PROPERTIES_PATH="/cd3user/tenancies/$PREFIX/config/${PREFIX}_setUpOCI.properties"
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=True --main_options=\"CD3 Services\" --sub_options=\"Fetch Compartments OCIDs to variables file\"'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to fetch compartments OCIDs" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+          echo "Fetched compartments OCIDs successfully" | tee -a "$LOG_FILE"
+
+      - name: Build Service Options JSON
+        run: |
+          LOG_FILE="/tmp/cd3_service_options_$(date +%F_%H-%M-%S).log"
+          IDENTITY_SUB_OPTIONS="${{ github.event.inputs.identity_sub_options }}"
+          GOVERNANCE_SUB_OPTIONS="${{ github.event.inputs.governance_sub_options }}"
+          COST_MANAGEMENT_SUB_OPTIONS="${{ github.event.inputs.cost_management_sub_options }}"
+          echo "Building service options JSON..." | tee -a "$LOG_FILE"
+          jq -n '{}' > /tmp/service_options.json
+          if [ "$IDENTITY_SUB_OPTIONS" != "None" ]; then
+            IFS=',' read -ra IDENTITY_ARRAY <<< "$IDENTITY_SUB_OPTIONS"
+            IDENTITY_JSON=$(jq -n --argjson arr "$(printf '%s\n' "${IDENTITY_ARRAY[@]}" | jq -R . | jq -s .)" '{"Identity": $arr}')
+            jq -s '.[0] * .[1]' /tmp/service_options.json <(echo "$IDENTITY_JSON") > /tmp/service_options_temp.json
+            mv /tmp/service_options_temp.json /tmp/service_options.json
+          fi
+          if [ "$GOVERNANCE_SUB_OPTIONS" != "None" ]; then
+            IFS=',' read -ra GOVERNANCE_ARRAY <<< "$GOVERNANCE_SUB_OPTIONS"
+            GOVERNANCE_JSON=$(jq -n --argjson arr "$(printf '%s\n' "${GOVERNANCE_ARRAY[@]}" | jq -R . | jq -s .)" '{"Governance": $arr}')
+            jq -s '.[0] * .[1]' /tmp/service_options.json <(echo "$GOVERNANCE_JSON") > /tmp/service_options_temp.json
+            mv /tmp/service_options_temp.json /tmp/service_options.json
+          fi
+          if [ "$COST_MANAGEMENT_SUB_OPTIONS" != "None" ]; then
+            IFS=',' read -ra COST_MANAGEMENT_ARRAY <<< "$COST_MANAGEMENT_SUB_OPTIONS"
+            COST_MANAGEMENT_JSON=$(jq -n --argjson arr "$(printf '%s\n' "${COST_MANAGEMENT_ARRAY[@]}" | jq -R . | jq -s .)" '{"Cost Management": $arr}')
+            jq -s '.[0] * .[1]' /tmp/service_options.json <(echo "$COST_MANAGEMENT_JSON") > /tmp/service_options_temp.json
+            mv /tmp/service_options_temp.json /tmp/service_options.json
+          fi
+          cat /tmp/service_options.json >> "$LOG_FILE"
+          echo "Service options JSON built successfully" | tee -a "$LOG_FILE"
+
+      - name: Run Create Workflow for Services
+        run: |
+          LOG_FILE="/tmp/cd3_create_workflow_$(date +%F_%H-%M-%S).log"
+          PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+          CONTAINER_NAME="cd3_toolkit"
+          PROPERTIES_PATH="/cd3user/tenancies/$PREFIX/config/${PREFIX}_setUpOCI.properties"
+          # Validate JSON
+          jq . /tmp/service_options.json >> "$LOG_FILE" 2>&1 || { echo "Error: Invalid JSON in service_options" | tee -a "$LOG_FILE"; exit 1; }
+          # Check if JSON is empty
+          if [ "$(jq 'length' /tmp/service_options.json)" -eq 0 ]; then
+            echo "No services selected, skipping create workflow" | tee -a "$LOG_FILE"
+            exit 0
+          fi
+          # Iterate over main_options
+          jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
+            echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
+            # Get sub_options as comma-separated string
+            sub_options=$(jq -r --arg main_option "$main_option" '.[$main_option] | join(",")' /tmp/service_options.json)
+            if [ -z "$sub_options" ]; then
+              echo "Warning: No sub_options defined for $main_option, skipping" | tee -a "$LOG_FILE"
+              continue
+            fi
+            echo "Sub-options for $main_option: $sub_options" | tee -a "$LOG_FILE"
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=True --main_options=\"$main_option\" --sub_options=\"$sub_options\"'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run create workflow for $main_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+            echo "Create workflow completed for $main_option" | tee -a "$LOG_FILE"
+          done
+          rm -f /tmp/service_options.json
+          echo "Create workflow completed successfully for all services" | tee -a "$LOG_FILE"
+
+      - name: Cleanup SSH Key
+        if: success()
+        run: |
+          rm -f ~/.ssh/temp-id_rsa
+          echo "Temporary SSH keys deleted"
