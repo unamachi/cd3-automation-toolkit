@@ -720,46 +720,45 @@ jobs:
 
       - name: Create Service Options JSON
         run: |
-                LOG_FILE="/tmp/cd3_service_options_$(date +%F_%H-%M-%S).log"
-                touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
-                echo "Starting Create Service Options JSON step at $(date)" | tee -a "$LOG_FILE"
-                echo "INSTANCE_IP=${{ env.INSTANCE_IP }}" | tee -a "$LOG_FILE"
-                if [ -z "${{ env.INSTANCE_IP }}" ]; then
-                  echo "Error: INSTANCE_IP is empty" | tee -a "$LOG_FILE"
-                  exit 1
-                fi
-                IDENTITY_SUB_OPTIONS="${{ github.event.inputs.identity_sub_options }}"
-                GOVERNANCE_SUB_OPTIONS="${{ github.event.inputs.governance_sub_options }}"
-                COST_SUB_OPTIONS="${{ github.event.inputs.cost_management_sub_options }}"
-                echo "Input identity_sub_options: $IDENTITY_SUB_OPTIONS" | tee -a "$LOG_FILE"
-                echo "Input governance_sub_options: $GOVERNANCE_SUB_OPTIONS" | tee -a "$LOG_FILE"
-                echo "Input cost_management_sub_options: $COST_SUB_OPTIONS" | tee -a "$LOG_FILE"
-                # Initialize empty JSON object
-                jq -n '{}' > /tmp/service_options.json
-                # Add Identity options if not None
-                if [ "$IDENTITY_SUB_OPTIONS" != "None" ]; then
-                  jq --arg sub_options "$IDENTITY_SUB_OPTIONS" '. + {"Identity": [$sub_options | split(",") | map(. | trim)]}' /tmp/service_options.json > /tmp/service_options_tmp.json
-                  mv /tmp/service_options_tmp.json /tmp/service_options.json
-                fi
-                # Add Governance options if not None
-                if [ "$GOVERNANCE_SUB_OPTIONS" != "None" ]; then
-                  jq --arg sub_options "$GOVERNANCE_SUB_OPTIONS" '. + {"Governance": [$sub_options | split(",") | map(. | trim)]}' /tmp/service_options.json > /tmp/service_options_tmp.json
-                  mv /tmp/service_options_tmp.json /tmp/service_options.json
-                fi
-                # Add Cost Management options if not None
-                if [ "$COST_SUB_OPTIONS" != "None" ]; then
-                  jq --arg sub_options "$COST_SUB_OPTIONS" '. + {"Cost": [$sub_options | split(",") | map(. | trim)]}' /tmp/service_options.json > /tmp/service_options_tmp.json
-                  mv /tmp/service_options_tmp.json /tmp/service_options.json
-                fi
-                if ! jq . /tmp/service_options.json >> "$LOG_FILE" 2>&1; then
-                  echo "Error: Generated invalid JSON in service_options.json" | tee -a "$LOG_FILE"
-                  cat /tmp/service_options.json >> "$LOG_FILE" 2>&1
-                  exit 1
-                fi
-                echo "Generated /tmp/service_options.json:" | tee -a "$LOG_FILE"
-                cat /tmp/service_options.json >> "$LOG_FILE"
-                echo "Service options JSON created successfully" >> "$LOG_FILE"
-
+                  LOG_FILE="/tmp/cd3_service_options_$(date +%F_%H-%M-%S).log"
+                  touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
+                  echo "Starting Create Service Options JSON step at $(date)" | tee -a "$LOG_FILE"
+                  echo "INSTANCE_IP=${{ env.INSTANCE_IP }}" | tee -a "$LOG_FILE"
+                  if [ -z "${{ env.INSTANCE_IP }}" ]; then
+                    echo "Error: INSTANCE_IP is empty" | tee -a "$LOG_FILE"
+                    exit 1
+                  fi
+                  IDENTITY_SUB_OPTIONS="${{ github.event.inputs.identity_sub_options }}"
+                  GOVERNANCE_SUB_OPTIONS="${{ github.event.inputs.governance_sub_options }}"
+                  COST_SUB_OPTIONS="${{ github.event.inputs.cost_management_sub_options }}"
+                  echo "Input identity_sub_options: $IDENTITY_SUB_OPTIONS" | tee -a "$LOG_FILE"
+                  echo "Input governance_sub_options: $GOVERNANCE_SUB_OPTIONS" | tee -a "$LOG_FILE"
+                  echo "Input cost_management_sub_options: $COST_SUB_OPTIONS" | tee -a "$LOG_FILE"
+                  # Initialize empty JSON object
+                  jq -n '{}' > /tmp/service_options.json
+                  # Add Identity options if not None
+                  if [ "$IDENTITY_SUB_OPTIONS" != "None" ]; then
+                    jq --arg sub_options "$IDENTITY_SUB_OPTIONS" '. + {"Identity": [$sub_options | split(",")]}' /tmp/service_options.json > /tmp/service_options_tmp.json
+                    mv /tmp/service_options_tmp.json /tmp/service_options.json
+                  fi
+                  # Add Governance options if not None
+                  if [ "$GOVERNANCE_SUB_OPTIONS" != "None" ]; then
+                    jq --arg sub_options "$GOVERNANCE_SUB_OPTIONS" '. + {"Governance": [$sub_options | split(",")]}' /tmp/service_options.json > /tmp/service_options_tmp.json
+                    mv /tmp/service_options_tmp.json /tmp/service_options.json
+                  fi
+                  # Add Cost Management options if not None
+                  if [ "$COST_SUB_OPTIONS" != "None" ]; then
+                    jq --arg sub_options "$COST_SUB_OPTIONS" '. + {"Cost": [$sub_options | split(",")]}' /tmp/service_options.json > /tmp/service_options_tmp.json
+                    mv /tmp/service_options_tmp.json /tmp/service_options.json
+                  fi
+                  if ! jq . /tmp/service_options.json >> "$LOG_FILE" 2>&1; then
+                    echo "Error: Generated invalid JSON in service_options.json" | tee -a "$LOG_FILE"
+                    cat /tmp/service_options.json >> "$LOG_FILE" 2>&1
+                    exit 1
+                  fi
+                  echo "Generated /tmp/service_options.json:" | tee -a "$LOG_FILE"
+                  cat /tmp/service_options.json >> "$LOG_FILE"
+                  echo "Service options JSON created successfully" | tee -a "$LOG_FILE"
 
 
       - name: Run Create Workflow for Services
