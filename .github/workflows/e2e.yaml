@@ -681,7 +681,7 @@ jobs:
                 workflow_type=create_resources
                 cd3file=/cd3user/tenancies/$PREFIX/cd3_files/CD3-Blank-template.xlsx
                 outdir=/cd3user/tenancies/$PREFIX/terraform_files
-                outdir_structure_file=/cd3user/tenancies/tenancytestt/tenancytestt_outdir_structure_file.properties
+                outdir_structure_file=/cd3user/tenancies/$PREFIX/$PREFIX_outdir_structure_file.properties
                 prefix=$PREFIX
                 auth_mechanism=api_key
                 config_file=$OCI_CONFIG_DEST_PATH
