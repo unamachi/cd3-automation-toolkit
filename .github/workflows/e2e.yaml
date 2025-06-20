@@ -575,9 +575,8 @@ jobs:
                 rm -f /tmp/oci_api_private.pem /tmp/tenancyconfig.properties 2>/dev/null
                 echo "Cleaned up temporary files" >> "$LOG_FILE"
           
-#Changes for running the workflow
+      #Changes for running the workflow
       - name: Copy Excel File to CD3 Instance
-        needs: [Setup CD3 Automation Toolkit]
         run: |
           LOG_FILE="/tmp/cd3_excel_$(date +%F_%H-%M-%S).log"
           PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
@@ -590,7 +589,6 @@ jobs:
           echo "Excel file copied to container at $EXCEL_DEST_PATH" | tee -a "$LOG_FILE"
 
       - name: Create setUpOCI Properties File
-        needs: [Copy Excel File to CD3 Instance]
         env:
                 TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
                 USER_SECRET_OCID: ${{ secrets.USER_SECRET_OCID }}
@@ -765,7 +763,6 @@ jobs:
 
 
       - name: Run Create Workflow for Services
-        needs: [Create Service Options JSON]
         run: |
           LOG_FILE="/tmp/cd3_create_workflow_$(date +%F_%H-%M-%S).log"
           touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
