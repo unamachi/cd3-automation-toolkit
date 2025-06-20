@@ -577,6 +577,7 @@ jobs:
           
 #Changes for running the workflow
       - name: Copy Excel File to CD3 Instance
+        needs: [Setup CD3 Automation Toolkit]
         run: |
           LOG_FILE="/tmp/cd3_excel_$(date +%F_%H-%M-%S).log"
           PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
@@ -589,12 +590,14 @@ jobs:
           echo "Excel file copied to container at $EXCEL_DEST_PATH" | tee -a "$LOG_FILE"
 
       - name: Create setUpOCI Properties File
+        needs: [Copy Excel File to CD3 Instance]
         env:
                 TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
                 USER_SECRET_OCID: ${{ secrets.USER_SECRET_OCID }}
                 FINGERPRINT_SECRET_OCID: ${{ secrets.FINGERPRINT_SECRET_OCID }}
                 API_SECRET_OCID: ${{ secrets.API_SECRET_OCID }}
                 COMPARTMENT_SECRET_OCID: ${{ secrets.COMPARTMENT_SECRET_OCID }}
+                OCI_REGION: us-phoenix-1
         run: |
                 LOG_FILE="/tmp/cd3_properties_$(date +%F_%H-%M-%S).log"
                 touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
@@ -664,7 +667,7 @@ jobs:
                 user=$user_ocid
                 fingerprint=$fingerprint
                 tenancy=$tenancy_ocid
-                region=us-phoenix-1
+                region=$OCI_REGION
                 key_file=$KEY_DEST_PATH
                 EOF
                 chmod 600 /tmp/oci_config 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on oci_config" | tee -a "$LOG_FILE"; exit 1; }
@@ -687,7 +690,7 @@ jobs:
                 user_ocid=$user_ocid
                 fingerprint=$fingerprint
                 compartment_ocid=$compartment_ocid
-                region=us-phoenix-1
+                region=$OCI_REGION
                 tf_or_tofu=terraform
                 EOF
                 chmod 600 /tmp/${PREFIX}_setUpOCI.properties 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on properties file" | tee -a "$LOG_FILE"; exit 1; }
@@ -717,7 +720,52 @@ jobs:
                 echo "Properties file copied to container at $PROPERTIES_DEST_PATH" | tee -a "$LOG_FILE"
                 echo "OCI config file copied to container at $OCI_CONFIG_DEST_PATH" | tee -a "$LOG_FILE"
 
+      - name: Create Service Options JSON
+        run: |
+                LOG_FILE="/tmp/cd3_service_options_$(date +%F_%H-%M-%S).log"
+                touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
+                echo "Starting Create Service Options JSON step at $(date)" | tee -a "$LOG_FILE"
+                echo "INSTANCE_IP=${{ env.INSTANCE_IP }}" | tee -a "$LOG_FILE"
+                if [ -z "${{ env.INSTANCE_IP }}" ]; then
+                  echo "Error: INSTANCE_IP is empty" | tee -a "$LOG_FILE"
+                  exit 1
+                fi
+                IDENTITY_SUB_OPTIONS="${{ github.event.inputs.identity_sub_options }}"
+                GOVERNANCE_SUB_OPTIONS="${{ github.event.inputs.governance_sub_options }}"
+                COST_SUB_OPTIONS="${{ github.event.inputs.cost_management_sub_options }}"
+                echo "Input identity_sub_options: $IDENTITY_SUB_OPTIONS" | tee -a "$LOG_FILE"
+                echo "Input governance_sub_options: $GOVERNANCE_SUB_OPTIONS" | tee -a "$LOG_FILE"
+                echo "Input cost_management_sub_options: $COST_SUB_OPTIONS" | tee -a "$LOG_FILE"
+                # Initialize empty JSON object
+                jq -n '{}' > /tmp/service_options.json
+                # Add Identity options if not None
+                if [ "$IDENTITY_SUB_OPTIONS" != "None" ]; then
+                  jq --arg sub_options "$IDENTITY_SUB_OPTIONS" '. + {"Identity": [$sub_options | split(",") | map(. | trim)]}' /tmp/service_options.json > /tmp/service_options_tmp.json
+                  mv /tmp/service_options_tmp.json /tmp/service_options.json
+                fi
+                # Add Governance options if not None
+                if [ "$GOVERNANCE_SUB_OPTIONS" != "None" ]; then
+                  jq --arg sub_options "$GOVERNANCE_SUB_OPTIONS" '. + {"Governance": [$sub_options | split(",") | map(. | trim)]}' /tmp/service_options.json > /tmp/service_options_tmp.json
+                  mv /tmp/service_options_tmp.json /tmp/service_options.json
+                fi
+                # Add Cost Management options if not None
+                if [ "$COST_SUB_OPTIONS" != "None" ]; then
+                  jq --arg sub_options "$COST_SUB_OPTIONS" '. + {"Cost": [$sub_options | split(",") | map(. | trim)]}' /tmp/service_options.json > /tmp/service_options_tmp.json
+                  mv /tmp/service_options_tmp.json /tmp/service_options.json
+                fi
+                if ! jq . /tmp/service_options.json >> "$LOG_FILE" 2>&1; then
+                  echo "Error: Generated invalid JSON in service_options.json" | tee -a "$LOG_FILE"
+                  cat /tmp/service_options.json >> "$LOG_FILE" 2>&1
+                  exit 1
+                fi
+                echo "Generated /tmp/service_options.json:" | tee -a "$LOG_FILE"
+                cat /tmp/service_options.json >> "$LOG_FILE"
+                echo "Service options JSON created successfully" >> "$LOG_FILE"
+
+
+
       - name: Run Create Workflow for Services
+        needs: [Create Service Options JSON]
         run: |
           LOG_FILE="/tmp/cd3_create_workflow_$(date +%F_%H-%M-%S).log"
           touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
