@@ -719,32 +719,51 @@ jobs:
 
       - name: Run Create Workflow for Services
         run: |
-                        LOG_FILE="/tmp/cd3_create_workflow_$(date +%F_%H-%M-%S).log"
-                        PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
-                        CONTAINER_NAME="cd3_toolkit"
-                        PROPERTIES_PATH="/cd3user/tenancies/$PREFIX/config/${PREFIX}_setUpOCI.properties"
-                        # Validate JSON
-                        jq . /tmp/service_options.json >> "$LOG_FILE" 2>&1 || { echo "Error: Invalid JSON in service_options" | tee -a "$LOG_FILE"; exit 1; }
-                        # Check if JSON is empty
-                        if [ "$(jq 'length' /tmp/service_options.json)" -eq 0 ]; then
-                          echo "No services selected, skipping create workflow" | tee -a "$LOG_FILE"
-                          exit 0
-                        fi
-                        # Iterate over main_options
-                        jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
-                          echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
-                          # Get sub_options as comma-separated string
-                          sub_options=$(jq -r --arg main_option "$main_option" '.[$main_option] | join(",")' /tmp/service_options.json)
-                          if [ -z "$sub_options" ]; then
-                            echo "Warning: No sub_options defined for $main_option, skipping" | tee -a "$LOG_FILE"
-                            continue
-                          fi
-                          echo "Sub-options for $main_option: $sub_options" | tee -a "$LOG_FILE"
-                          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=True --main_options=\"$main_option\" --sub_options=\"$sub_options\"'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run create workflow for $main_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
-                          echo "Create workflow completed for $main_option" | tee -a "$LOG_FILE"
-                        done
-                        rm -f /tmp/service_options.json
-                        echo "Create workflow completed successfully for all services" | tee -a "$LOG_FILE"
+          LOG_FILE="/tmp/cd3_create_workflow_$(date +%F_%H-%M-%S).log"
+          touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
+          echo "Starting Run Create Workflow for Services step at $(date)" | tee -a "$LOG_FILE"
+          PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+          CONTAINER_NAME="cd3_toolkit"
+          PROPERTIES_PATH="/cd3user/tenancies/$PREFIX/config/${PREFIX}_setUpOCI.properties"
+          # Check if service_options.json exists
+          if [ ! -f /tmp/service_options.json ]; then
+            echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+          # Check if service_options.json is empty
+          if [ ! -s /tmp/service_options.json ]; then
+            echo "Error: /tmp/service_options.json is empty" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+          # Log service_options.json content for debugging
+          echo "Content of /tmp/service_options.json:" | tee -a "$LOG_FILE"
+          cat /tmp/service_options.json >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to read /tmp/service_options.json" | tee -a "$LOG_FILE"; exit 1; }
+          # Validate JSON
+          if ! jq . /tmp/service_options.json >> "$LOG_FILE" 2>&1; then
+            echo "Error: Invalid JSON in service_options.json" | tee -a "$LOG_FILE"
+            cat /tmp/service_options.json >> "$LOG_FILE" 2>&1
+            exit 1
+          fi
+          # Check if JSON is empty
+          if [ "$(jq 'length' /tmp/service_options.json)" -eq 0 ]; then
+            echo "No services selected, skipping create workflow" | tee -a "$LOG_FILE"
+            exit 0
+          fi
+          # Iterate over main_options
+          jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
+            echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
+            # Get sub_options as comma-separated string
+            sub_options=$(jq -r --arg main_option "$main_option" '.[$main_option] | join(",")' /tmp/service_options.json)
+            if [ -z "$sub_options" ]; then
+              echo "Warning: No sub_options defined for $main_option, skipping" | tee -a "$LOG_FILE"
+              continue
+            fi
+            echo "Sub-options for $main_option: $sub_options" | tee -a "$LOG_FILE"
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=True --main_options=\"$main_option\" --sub_options=\"$sub_options\"'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run create workflow for $main_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+            echo "Create workflow completed for $main_option" | tee -a "$LOG_FILE"
+          done
+          rm -f /tmp/service_options.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options.json" | tee -a "$LOG_FILE"
+          echo "Create workflow completed successfully for all services" | tee -a "$LOG_FILE"
 
       - name: Cleanup SSH Key
         if: success()
