@@ -842,11 +842,19 @@ jobs:
             CONTAINER_NAME="cd3_toolkit"
             REGION="us-phoenix-1"
             OUTDIR_STRUCTURE_FILE="/cd3user/tenancies/$PREFIX/${PREFIX}_outdir_structure_file.properties"
+            OCI_REGIONS_FILE="/cd3user/oci_tools/cd3_automation_toolkit/OCI_Regions"
             VERIFY_RESOURCES="${{ github.event.inputs.verify_resources || 'false' }}"
             if [ -z "${{ env.INSTANCE_IP }}" ]; then
               echo "Error: INSTANCE_IP is empty" | tee -a "$LOG_FILE"
               exit 1
             fi
+            # Map full region name to short key
+            SHORT_REGION=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OCI_REGIONS_FILE | grep \":$REGION\" | cut -d: -f1'") 2>>"$LOG_FILE"
+            if [ -z "$SHORT_REGION" ]; then
+              echo "Error: Failed to find short region key for $REGION in $OCI_REGIONS_FILE" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+            echo "Mapped region $REGION to short key $SHORT_REGION" | tee -a "$LOG_FILE"
             # Check if service_options.json exists
             if [ ! -f /tmp/service_options.json ]; then
               echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
@@ -868,9 +876,9 @@ jobs:
               echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
               # Set Terraform directory based on outdir_structure
               if [ "$USE_OUTDIR_STRUCTURE" = true ]; then
-                TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$REGION/$main_option"
+                TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION/$main_option"
               else
-                TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$REGION"
+                TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION"
               fi
               # Check if directory exists
               if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
@@ -927,7 +935,7 @@ jobs:
                 echo "Skipping resource verification for $main_option (verify_resources=$VERIFY_RESOURCES)" | tee -a "$LOG_FILE"
               fi
             done
-            echo "Terraform configurations applied successfully" | tee -a "$LOG_FILE"          
+            echo "Terraform configurations applied successfully" | tee -a "$LOG_FILE"        
 
 
       - name: Cleanup Temporary Files
