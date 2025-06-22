@@ -10,6 +10,10 @@ on:
       prefix:
         description: 'Custom prefix for tenancy config (default: <branch>-<run_id>)'
         required: false
+      region:
+          description: 'OCI region (e.g., us-phoenix-1)'
+          required: true
+          default: 'us-phoenix-1'
       identity_sub_options:
         description: 'Identity sub-options'
         type: choice
@@ -43,6 +47,11 @@ on:
         options:
           - None
           - Budgets
+      verify_resources:
+          description: 'Verify created resources (true/false)'
+          type: boolean
+          required: false
+          default: false
 jobs:
   Deploy_RM_Stack:
     runs-on: [self-hosted]
@@ -682,7 +691,6 @@ jobs:
                 cd3file=/cd3user/tenancies/$PREFIX/cd3_files/CD3-Blank-template.xlsx
                 outdir=/cd3user/tenancies/$PREFIX/terraform_files
                 outdir_structure_file=/cd3user/tenancies/$PREFIX/${PREFIX}_outdir_structure_file.properties
-
                 prefix=$PREFIX
                 auth_mechanism=api_key
                 config_file=$OCI_CONFIG_DEST_PATH
@@ -824,8 +832,123 @@ jobs:
           rm -f /tmp/service_options.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options.json" | tee -a "$LOG_FILE"
           echo "Create workflow completed successfully for all services" | tee -a "$LOG_FILE"
 
-      - name: Cleanup SSH Key
+
+      - name: Apply Terraform Configurations for Services
+        run: |
+            LOG_FILE="/tmp/cd3_terraform_apply_$(date +%F_%H-%M-%S).log"
+            touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
+            echo "Starting Apply Terraform Configurations step at $(date)" | tee -a "$LOG_FILE"
+            PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+            CONTAINER_NAME="cd3_toolkit"
+            REGION="us-phoenix-1"
+            OUTDIR_STRUCTURE_FILE="/cd3user/tenancies/$PREFIX/${PREFIX}_outdir_structure_file.properties"
+            VERIFY_RESOURCES="${{ github.event.inputs.verify_resources || 'false' }}"
+            if [ -z "${{ env.INSTANCE_IP }}" ]; then
+              echo "Error: INSTANCE_IP is empty" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+            # Check if service_options.json exists
+            if [ ! -f /tmp/service_options.json ]; then
+              echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+            # Copy service_options.json to instance
+            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/service_options.json opc@${{ env.INSTANCE_IP }}:/tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to SCP service_options.json" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/service_options.json $CONTAINER_NAME:/tmp/service_options.json" 2>>"$LOG_FILE" || { echo "Error: Failed to copy service_options.json to container" | tee -a "$LOG_FILE"; exit 1; }
+            # Check if outdir_structure is enabled
+            USE_OUTDIR_STRUCTURE=false
+            if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME test -f $OUTDIR_STRUCTURE_FILE" 2>>"$LOG_FILE"; then
+              USE_OUTDIR_STRUCTURE=true
+              echo "Outdir structure enabled: true" | tee -a "$LOG_FILE"
+            else
+              echo "Outdir structure enabled: false" | tee -a "$LOG_FILE"
+            fi
+            # Process each main_option
+            jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
+              echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
+              # Set Terraform directory based on outdir_structure
+              if [ "$USE_OUTDIR_STRUCTURE" = true ]; then
+                TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$REGION/$main_option"
+              else
+                TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$REGION"
+              fi
+              # Check if directory exists
+              if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
+                echo "Warning: Directory $TF_DIR does not exist, skipping $main_option" | tee -a "$LOG_FILE"
+                continue
+              fi
+              # Find latest .tfvars file
+              LATEST_TFVARS=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'ls -t $TF_DIR/*.tfvars 2>/dev/null | head -n 1'") 2>>"$LOG_FILE"
+              if [ -z "$LATEST_TFVARS" ]; then
+                echo "Warning: No .tfvars files found in $TF_DIR, skipping $main_option" | tee -a "$LOG_FILE"
+                continue
+              fi
+              echo "Latest .tfvars file: $LATEST_TFVARS" | tee -a "$LOG_FILE"
+              # Check timestamp (within 1 hour)
+              if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'find $LATEST_TFVARS -mmin -60'" 2>>"$LOG_FILE"; then
+                echo "Warning: $LATEST_TFVARS is older than 1 hour, skipping $main_option" | tee -a "$LOG_FILE"
+                continue
+              fi
+              # Run terraform commands
+              if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform init'" >> "$LOG_FILE" 2>&1; then
+                echo "Error: Terraform init failed for $main_option, continuing" | tee -a "$LOG_FILE"
+                continue
+              fi
+              if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform plan -var-file=$LATEST_TFVARS -out=tfplan'" >> "$LOG_FILE" 2>&1; then
+                echo "Error: Terraform plan failed for $main_option, continuing" | tee -a "$LOG_FILE"
+                continue
+              fi
+              if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform apply tfplan'" >> "$LOG_FILE" 2>&1; then
+                echo "Error: Terraform apply failed for $main_option, continuing" | tee -a "$LOG_FILE"
+                continue
+              fi
+              echo "Terraform apply completed for $main_option" | tee -a "$LOG_FILE"
+              # Optional resource verification
+              if [ "$VERIFY_RESOURCES" = true ]; then
+                echo "Verifying resources for $main_option" | tee -a "$LOG_FILE"
+                case "$main_option" in
+                  Identity)
+                    if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME oci iam compartment list --compartment-id ${{ secrets.COMPARTMENT_SECRET_OCID }} --region $REGION --limit 5" >> "$LOG_FILE" 2>&1; then
+                      echo "Warning: Failed to verify compartments for $main_option, continuing" | tee -a "$LOG_FILE"
+                    fi
+                    ;;
+                  Governance)
+                    if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME oci identity tag-namespace list --compartment-id ${{ secrets.COMPARTMENT_SECRET_OCID }} --region $REGION --limit 5" >> "$LOG_FILE" 2>&1; then
+                      echo "Warning: Failed to verify tags for $main_option, continuing" | tee -a "$LOG_FILE"
+                    fi
+                    ;;
+                  Cost)
+                    if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME oci budgets budget list --compartment-id ${{ secrets.COMPARTMENT_SECRET_OCID }} --region $REGION --limit 5" >> "$LOG_FILE" 2>&1; then
+                      echo "Warning: Failed to verify budgets for $main_option, continuing" | tee -a "$LOG_FILE"
+                    fi
+                    ;;
+                esac
+              else
+                echo "Skipping resource verification for $main_option (verify_resources=$VERIFY_RESOURCES)" | tee -a "$LOG_FILE"
+              fi
+            done
+            echo "Terraform configurations applied successfully" | tee -a "$LOG_FILE"          
+
+
+      - name: Cleanup Temporary Files
         if: success()
         run: |
-          rm -f ~/.ssh/temp-id_rsa
-          echo "Temporary SSH keys deleted"
+              LOG_FILE="/tmp/cd3_cleanup_$(date +%F_%H-%M-%S).log"
+              touch "$LOG_FILE" || { echo "Error: Failed to create cleanup log file" >&2; exit 1; }
+              echo "Starting cleanup at $(date)" | tee -a "$LOG_FILE"
+              # Remove SSH key
+              rm -f ~/.ssh/temp-id_rsa 2>>"$LOG_FILE" || echo "Warning: Failed to remove ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+              # Remove workflow-specific files in /tmp
+              rm -f /tmp/service_options.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options.json" | tee -a "$LOG_FILE"
+              rm -f /tmp/service_options_tmp.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options_tmp.json" | tee -a "$LOG_FILE"
+              rm -f /tmp/oci_config 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/oci_config" | tee -a "$LOG_FILE"
+              rm -f /tmp/oci_api_private.pem 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/oci_api_private.pem" | tee -a "$LOG_FILE"
+              rm -f /tmp/${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}_setUpOCI.properties 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/${PREFIX}_setUpOCI.properties" | tee -a "$LOG_FILE"
+              rm -f /tmp/secret_temp_*.txt 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/secret_temp_*.txt" | tee -a "$LOG_FILE"
+              # Remove log files
+              rm -f /tmp/cd3_excel_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_excel_*.log" | tee -a "$LOG_FILE"
+              rm -f /tmp/cd3_properties_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_properties_*.log" | tee -a "$LOG_FILE"
+              rm -f /tmp/cd3_service_options_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_service_options_*.log" | tee -a "$LOG_FILE"
+              rm -f /tmp/cd3_create_workflow_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_create_workflow_*.log" | tee -a "$LOG_FILE"
+              rm -f /tmp/cd3_terraform_apply_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_terraform_apply_*.log" | tee -a "$LOG_FILE"
+              echo "Cleanup completed successfully" | tee -a "$LOG_FILE"
