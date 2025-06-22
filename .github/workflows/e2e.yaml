@@ -829,7 +829,7 @@ jobs:
             ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=True --main_options=\"$main_option\" --sub_options=\"$sub_options\"'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run create workflow for $main_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
             echo "Create workflow completed for $main_option" | tee -a "$LOG_FILE"
           done
-          rm -f /tmp/service_options.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options.json" | tee -a "$LOG_FILE"
+          #rm -f /tmp/service_options.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options.json" | tee -a "$LOG_FILE"
           echo "Create workflow completed successfully for all services" | tee -a "$LOG_FILE"
 
 
