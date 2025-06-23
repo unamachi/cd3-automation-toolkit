@@ -904,20 +904,30 @@ jobs:
                 echo "Warning: $LATEST_TFVARS is older than 1 hour, skipping $main_option" | tee -a "$LOG_FILE"
                 continue
               fi
-              # Run terraform commands
-              if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform init'" >> "$LOG_FILE" 2>&1; then
-                echo "Error: Terraform init failed for $main_option, continuing" | tee -a "$LOG_FILE"
-                continue
-              fi
-              if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform plan -var-file=$LATEST_TFVARS -out=tfplan'" >> "$LOG_FILE" 2>&1; then
-                echo "Error: Terraform plan failed for $main_option, continuing" | tee -a "$LOG_FILE"
-                continue
-              fi
-              if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform apply tfplan'" >> "$LOG_FILE" 2>&1; then
-                echo "Error: Terraform apply failed for $main_option, continuing" | tee -a "$LOG_FILE"
+
+
+              # Run terraform commands with retries
+              for cmd in "init" "plan -var-file=$LATEST_TFVARS -out=tfplan" "apply tfplan"; do
+                RETRY_COUNT=0
+                MAX_RETRIES=3
+                until ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform $cmd'" >> "$LOG_FILE" 2>&1; do
+                  RETRY_COUNT=$((RETRY_COUNT + 1))
+                  if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                    echo "Error: Terraform $cmd failed for $main_option after $MAX_RETRIES retries, continuing" | tee -a "$LOG_FILE"
+                    break
+                  fi
+                  echo "Retrying terraform $cmd for $main_option (attempt $((RETRY_COUNT + 1)))" | tee -a "$LOG_FILE"
+                  sleep 120
+                done
+                if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                  break
+                fi
+              done
+              if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
                 continue
               fi
               echo "Terraform apply completed for $main_option" | tee -a "$LOG_FILE"
+
               # Optional resource verification
               if [ "$VERIFY_RESOURCES" = true ]; then
                 echo "Verifying resources for $main_option" | tee -a "$LOG_FILE"
@@ -945,25 +955,25 @@ jobs:
             echo "Terraform configurations applied successfully" | tee -a "$LOG_FILE"       
 
 
-      # - name: Cleanup Temporary Files
-      #   if: success()
-      #   run: |
-      #         LOG_FILE="/tmp/cd3_cleanup_$(date +%F_%H-%M-%S).log"
-      #         touch "$LOG_FILE" || { echo "Error: Failed to create cleanup log file" >&2; exit 1; }
-      #         echo "Starting cleanup at $(date)" | tee -a "$LOG_FILE"
-      #         # Remove SSH key
-      #         rm -f ~/.ssh/temp-id_rsa 2>>"$LOG_FILE" || echo "Warning: Failed to remove ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
-      #         # Remove workflow-specific files in /tmp
-      #         rm -f /tmp/service_options.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options.json" | tee -a "$LOG_FILE"
-      #         rm -f /tmp/service_options_tmp.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options_tmp.json" | tee -a "$LOG_FILE"
-      #         rm -f /tmp/oci_config 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/oci_config" | tee -a "$LOG_FILE"
-      #         rm -f /tmp/oci_api_private.pem 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/oci_api_private.pem" | tee -a "$LOG_FILE"
-      #         rm -f /tmp/${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}_setUpOCI.properties 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/${PREFIX}_setUpOCI.properties" | tee -a "$LOG_FILE"
-      #         rm -f /tmp/secret_temp_*.txt 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/secret_temp_*.txt" | tee -a "$LOG_FILE"
-      #         # Remove log files
-      #         rm -f /tmp/cd3_excel_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_excel_*.log" | tee -a "$LOG_FILE"
-      #         rm -f /tmp/cd3_properties_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_properties_*.log" | tee -a "$LOG_FILE"
-      #         rm -f /tmp/cd3_service_options_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_service_options_*.log" | tee -a "$LOG_FILE"
-      #         rm -f /tmp/cd3_create_workflow_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_create_workflow_*.log" | tee -a "$LOG_FILE"
-      #         rm -f /tmp/cd3_terraform_apply_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_terraform_apply_*.log" | tee -a "$LOG_FILE"
-      #         echo "Cleanup completed successfully" | tee -a "$LOG_FILE"
+      - name: Cleanup Temporary Files
+        if: success()
+        run: |
+              LOG_FILE="/tmp/cd3_cleanup_$(date +%F_%H-%M-%S).log"
+              touch "$LOG_FILE" || { echo "Error: Failed to create cleanup log file" >&2; exit 1; }
+              echo "Starting cleanup at $(date)" | tee -a "$LOG_FILE"
+              # Remove SSH key
+              rm -f ~/.ssh/temp-id_rsa 2>>"$LOG_FILE" || echo "Warning: Failed to remove ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+              # Remove workflow-specific files in /tmp
+              rm -f /tmp/service_options.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options.json" | tee -a "$LOG_FILE"
+              rm -f /tmp/service_options_tmp.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options_tmp.json" | tee -a "$LOG_FILE"
+              rm -f /tmp/oci_config 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/oci_config" | tee -a "$LOG_FILE"
+              rm -f /tmp/oci_api_private.pem 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/oci_api_private.pem" | tee -a "$LOG_FILE"
+              rm -f /tmp/${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}_setUpOCI.properties 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/${PREFIX}_setUpOCI.properties" | tee -a "$LOG_FILE"
+              rm -f /tmp/secret_temp_*.txt 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/secret_temp_*.txt" | tee -a "$LOG_FILE"
+              # Remove log files
+              rm -f /tmp/cd3_excel_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_excel_*.log" | tee -a "$LOG_FILE"
+              rm -f /tmp/cd3_properties_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_properties_*.log" | tee -a "$LOG_FILE"
+              rm -f /tmp/cd3_service_options_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_service_options_*.log" | tee -a "$LOG_FILE"
+              rm -f /tmp/cd3_create_workflow_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_create_workflow_*.log" | tee -a "$LOG_FILE"
+              rm -f /tmp/cd3_terraform_apply_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_terraform_apply_*.log" | tee -a "$LOG_FILE"
+              echo "Cleanup completed successfully" | tee -a "$LOG_FILE"
