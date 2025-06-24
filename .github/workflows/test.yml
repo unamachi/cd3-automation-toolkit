@@ -1,4 +1,4 @@
-name: CD3 E2E Testing
+name: TESTT
 
 on:
   push:
