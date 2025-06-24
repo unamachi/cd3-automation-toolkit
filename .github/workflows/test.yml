@@ -33,31 +33,37 @@ on:
         required: false
         type: boolean
         default: false
-      service_selection:
-        description: |
-          Select the workflow type and services to process.
-          Format: "<Workflow Type>: <Main Option>: <Sub Options>"
-          Example: "Create Identity: Compartments,Groups" creates Identity resources.
-          Choose "Export Resources" for export with no services.
+      workflow_type:
+        description: 'Select workflow type'
         required: true
         type: choice
         options:
-          - Export Resources
-          - Create Identity: Compartments
-          - Create Identity: Compartments,Groups
-          - Create Identity: Compartments,Groups,Policies
-          - Create Identity: Compartments,Groups,Policies,Users
-          - Create Network: VCN
-          - Create Network: VCN,Subnets
-          - Create Network: VCN,Subnets,Route Tables
-          - Create Network: VCN,Subnets,Route Tables,Security Lists
-          - Create Compute: Instances
-          - Create Compute: Instances,Instance Configurations
-          - Create Storage: Block Volumes
-          - Create Storage: Block Volumes,File Storage
-          - Create Databases: Autonomous Databases
-          - Create Databases: Autonomous Databases,DB Systems
-        default: Export Resources
+          - create_resources
+          - export_resources
+        default: create_resources
+      main_option:
+        description: 'Select main service option (required for create_resources, leave as None for export_resources)'
+        required: true
+        type: choice
+        options:
+          - None
+          - Identity
+          - Network
+          - Compute
+          - Storage
+          - Databases
+        default: None
+      sub_options:
+        description: |
+          Comma-separated sub-options for the selected main option (required for create_resources, leave empty for export_resources).
+          Identity: Compartments, Groups, Policies, Users
+          Network: VCN, Subnets, Route Tables, Security Lists
+          Compute: Instances, Instance Configurations
+          Storage: Block Volumes, File Storage
+          Databases: Autonomous Databases, DB Systems
+          Example: For Identity, enter "Compartments,Groups,Policies"
+        required: false
+        type: string
 
 jobs:
   Validate_Inputs:
@@ -66,27 +72,34 @@ jobs:
       workflow_type: ${{ steps.validate.outputs.workflow_type }}
       service_options: ${{ steps.validate.outputs.service_options }}
     steps:
-      - name: Validate Service Selection
+      - name: Validate Inputs
         id: validate
         run: |
-          echo "Validating service_selection input..."
-          SELECTION="${{ github.event.inputs.service_selection }}"
-          if [ -z "$SELECTION" ]; then
-            echo "Error: service_selection is empty"
+          echo "Validating inputs..."
+          WORKFLOW_TYPE="${{ github.event.inputs.workflow_type }}"
+          MAIN_OPTION="${{ github.event.inputs.main_option }}"
+          SUB_OPTIONS="${{ github.event.inputs.sub_options }}"
+          if [ "$WORKFLOW_TYPE" != "create_resources" ] && [ "$WORKFLOW_TYPE" != "export_resources" ]; then
+            echo "Error: workflow_type must be 'create_resources' or 'export_resources'"
             exit 1
           fi
-          # Parse selection
-          if [ "$SELECTION" = "Export Resources" ]; then
-            WORKFLOW_TYPE="export_resources"
-            SERVICE_OPTIONS="{}"
-          else
-            # Extract workflow_type, main_option, sub_options
-            IFS=': ' read -r WORKFLOW MAIN_OPTION SUB_OPTIONS <<< "$SELECTION"
-            if [ "$WORKFLOW" != "Create" ]; then
-              echo "Error: Invalid selection format, must start with 'Create' or be 'Export Resources'"
-              exit 1
-            fi
-            WORKFLOW_TYPE="create_resources"
+          if [ "$WORKFLOW_TYPE" = "create_resources" ] && [ "$MAIN_OPTION" = "None" ]; then
+            echo "Error: main_option cannot be 'None' for create_resources"
+            exit 1
+          fi
+          if [ "$WORKFLOW_TYPE" = "export_resources" ] && [ "$MAIN_OPTION" != "None" ]; then
+            echo "Error: main_option must be 'None' for export_resources"
+            exit 1
+          fi
+          if [ "$WORKFLOW_TYPE" = "export_resources" ] && [ -n "$SUB_OPTIONS" ]; then
+            echo "Error: sub_options must be empty for export_resources"
+            exit 1
+          fi
+          if [ "$WORKFLOW_TYPE" = "create_resources" ] && [ -z "$SUB_OPTIONS" ]; then
+            echo "Error: sub_options cannot be empty for create_resources"
+            exit 1
+          fi
+          if [ "$WORKFLOW_TYPE" = "create_resources" ]; then
             VALID_MAIN_OPTIONS=("Identity" "Network" "Compute" "Storage" "Databases")
             if [[ ! " ${VALID_MAIN_OPTIONS[*]} " =~ " $MAIN_OPTION " ]]; then
               echo "Error: Invalid main_option '$MAIN_OPTION'. Valid options: ${VALID_MAIN_OPTIONS[*]}"
@@ -104,7 +117,7 @@ jobs:
             )
             IFS=',' read -ra SUB_ARRAY <<< "$SUB_OPTIONS"
             if [ ${#SUB_ARRAY[@]} -eq 0 ]; then
-              echo "Error: At least one sub-option must be selected for create_resources"
+              echo "Error: At least one sub-option must be specified for create_resources"
               exit 1
             fi
             VALID_SUBS=$(echo "$VALID_SUB_OPTIONS" | jq -r ".[\"$MAIN_OPTION\"][]")
@@ -117,6 +130,8 @@ jobs:
             done
             SUB_OPTIONS_JSON=$(printf '%s\n' "${SUB_ARRAY[@]}" | jq -R . | jq -s .)
             SERVICE_OPTIONS=$(jq -n --arg main "$MAIN_OPTION" --argjson subs "$SUB_OPTIONS_JSON" '{($main): $subs}')
+          else
+            SERVICE_OPTIONS="{}"
           fi
           JSON_PAYLOAD=$(jq -n --arg workflow_type "$WORKFLOW_TYPE" --argjson service_options "$SERVICE_OPTIONS" '{workflow_type: $workflow_type, service_options: $service_options}')
           echo "workflow_type=$WORKFLOW_TYPE" >> $GITHUB_OUTPUT
@@ -125,7 +140,7 @@ jobs:
           echo "Input validation successful"
 
   # Rest of the jobs (Deploy_RM_Stack, CD3_Bootstrap, etc.) remain unchanged
-  # Example: Copy Service Options JSON (same as previous solutions)
+  # Example: Copy Service Options JSON
   CD3_Bootstrap:
     runs-on: self-hosted
     needs: [Deploy_RM_Stack, Validate_Inputs]
