@@ -1,15 +1,20 @@
-name: TESTT
+name: Start CD3 Workflow
 
 on:
-  push:
-    branches:
-      - master
-      - develop
   workflow_dispatch:
     inputs:
+      workflow_type:
+        description: 'Select workflow type'
+        required: true
+        type: choice
+        options:
+          - create_resources
+          - export_resources
+        default: create_resources
       prefix:
         description: 'Custom prefix for tenancy config (e.g., test-123)'
         required: false
+        type: string
       region:
         description: 'OCI region for create_resources (e.g., us-phoenix-1)'
         required: false
@@ -32,133 +37,39 @@ on:
         required: false
         type: boolean
         default: false
-      workflow_type:
-        description: 'Select workflow type'
-        required: true
-        type: choice
-        options:
-          - create_resources
-          - export_resources
-        default: create_resources
-      main_option:
-        description: 'Select main service option (choose "None" for export_resources)'
-        required: true
-        type: choice
-        options:
-          - None
-          - Identity
-          - Network
-          - Compute
-          - Storage
-          - Databases
-        default: None
-      sub_options:
-        description: |
-          Comma-separated sub-options for the selected main option (leave empty for export_resources).
-          Identity: Compartments, Groups, Policies, Users
-          Network: VCN, Subnets, Route Tables, Security Lists
-          Compute: Instances, Instance Configurations
-          Storage: Block Volumes, File Storage
-          Databases: Autonomous Databases, DB Systems
-          Example: For Identity, enter "Compartments,Groups"
-        required: false
-        type: string
 
 jobs:
-  Validate_Inputs:
+  Trigger_Main_Workflow:
     runs-on: ubuntu-latest
-    outputs:
-      workflow_type: ${{ steps.validate.outputs.workflow_type }}
-      service_options: ${{ steps.validate.outputs.service_options }}
     steps:
-      - name: Validate Inputs
-        id: validate
+      - name: Trigger E2E Workflow
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Validating inputs..."
           WORKFLOW_TYPE="${{ github.event.inputs.workflow_type }}"
-          MAIN_OPTION="${{ github.event.inputs.main_option }}"
-          SUB_OPTIONS="${{ github.event.inputs.sub_options }}"
-          if [ "$WORKFLOW_TYPE" != "create_resources" ] && [ "$WORKFLOW_TYPE" != "export_resources" ]; then
-            echo "Error: workflow_type must be 'create_resources' or 'export_resources'"
-            exit 1
-          fi
-          if [ "$WORKFLOW_TYPE" = "create_resources" ] && [ "$MAIN_OPTION" = "None" ]; then
-            echo "Error: main_option cannot be 'None' for create_resources"
-            exit 1
-          fi
-          if [ "$WORKFLOW_TYPE" = "export_resources" ] && [ "$MAIN_OPTION" != "None" ]; then
-            echo "Error: main_option must be 'None' for export_resources"
-            exit 1
-          fi
-          if [ "$WORKFLOW_TYPE" = "export_resources" ] && [ -n "$SUB_OPTIONS" ]; then
-            echo "Error: sub_options must be empty for export_resources"
-            exit 1
-          fi
-          if [ "$WORKFLOW_TYPE" = "create_resources" ] && [ -z "$SUB_OPTIONS" ]; then
-            echo "Error: sub_options cannot be empty for create_resources"
-            exit 1
-          fi
-          if [ "$WORKFLOW_TYPE" = "create_resources" ]; then
-            VALID_MAIN_OPTIONS=("Identity" "Network" "Compute" "Storage" "Databases")
-            if [[ ! " ${VALID_MAIN_OPTIONS[*]} " =~ " $MAIN_OPTION " ]]; then
-              echo "Error: Invalid main_option '$MAIN_OPTION'. Valid options: ${VALID_MAIN_OPTIONS[*]}"
-              exit 1
-            fi
-            VALID_SUB_OPTIONS=$(cat << EOF
-            {
-              "Identity": ["Compartments", "Groups", "Policies", "Users"],
-              "Network": ["VCN", "Subnets", "Route Tables", "Security Lists"],
-              "Compute": ["Instances", "Instance Configurations"],
-              "Storage": ["Block Volumes", "File Storage"],
-              "Databases": ["Autonomous Databases", "DB Systems"]
-            }
-            EOF
-            )
-            IFS=',' read -ra SUB_ARRAY <<< "$SUB_OPTIONS"
-            for SUB in "${SUB_ARRAY[@]}"; do
-              SUB=$(echo "$SUB" | tr -d '[:space:]')
-              VALID_SUBS=$(echo "$VALID_SUB_OPTIONS" | jq -r ".[\"$MAIN_OPTION\"][]")
-              if [[ ! " $VALID_SUBS " =~ " $SUB " ]]; then
-                echo "Error: Invalid sub_option '$SUB' for '$MAIN_OPTION'. Valid options: $VALID_SUBS"
-                exit 1
-              fi
-            done
-            SUB_OPTIONS_JSON=$(echo "${SUB_ARRAY[@]}" | tr ' ' '\n' | jq -R . | jq -s .)
-            SERVICE_OPTIONS=$(jq -n --arg main "$MAIN_OPTION" --argjson subs "$SUB_OPTIONS_JSON" '{($main): $subs}')
-          else
-            SERVICE_OPTIONS="{}"
-          fi
-          JSON_PAYLOAD=$(jq -n --arg workflow_type "$WORKFLOW_TYPE" --argjson service_options "$SERVICE_OPTIONS" '{workflow_type: $workflow_type, service_options: $service_options}')
-          echo "workflow_type=$WORKFLOW_TYPE" >> $GITHUB_OUTPUT
-          echo "service_options=$JSON_PAYLOAD" >> $GITHUB_OUTPUT
-          echo "$JSON_PAYLOAD" > /tmp/service_options.json
-          echo "Input validation successful"
-
-  # Rest of the jobs (Deploy_RM_Stack, CD3_Bootstrap, etc.) remain unchanged
-  # Example: Copy Service Options JSON
-  CD3_Bootstrap:
-    runs-on: self-hosted
-    needs: [Deploy_RM_Stack, Validate_Inputs]
-    env:
-      OCI_REGION: us-phoenix-1
-      INSTANCE_NAME: workvm-${{ github.run_id }}
-    steps:
-      # ... (previous steps unchanged)
-      - name: Copy Service Options JSON
-        run: |
-          LOG_FILE="/tmp/copy_service_options_$(date +%F_%H-%M-%S).log"
-          PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
-          CONTAINER_NAME="cd3_toolkit"
-          JSON_DEST_PATH="/cd3user/tenancies/$PREFIX/config/service_options.json"
-          echo "${{ needs.Validate_Inputs.outputs.service_options }}" > /tmp/service_options.json
-          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/service_options.json opc@${{ env.INSTANCE_IP }}:/tmp/service_options.json 2>>"$LOG_FILE" || {
-            echo "Error: Failed to SCP JSON file" | tee -a "$LOG_FILE"; exit 1
-          }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/service_options.json $CONTAINER_NAME:$JSON_DEST_PATH" 2>>"$LOG_FILE" || {
-            echo "Error: Failed to copy JSON file to container" | tee -a "$LOG_FILE"; exit 1
-          }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/service_options.json" 2>>"$LOG_FILE" || {
-            echo "Warning: Failed to remove temporary JSON file" | tee -a "$LOG_FILE"
-          }
-          echo "Service options JSON copied to container at $JSON_DEST_PATH" >> "$LOG_FILE"
-      # ... (remaining steps unchanged)
+          PAYLOAD=$(jq -n \
+            --arg ref "${{ github.ref }}" \
+            --arg prefix "${{ github.event.inputs.prefix }}" \
+            --arg region "${{ github.event.inputs.region }}" \
+            --arg export_regions "${{ github.event.inputs.export_regions }}" \
+            --arg export_compartments "${{ github.event.inputs.export_compartments }}" \
+            --arg export_tags "${{ github.event.inputs.export_tags }}" \
+            --arg verify_resources "${{ github.event.inputs.verify_resources }}" \
+            --arg workflow_type "$WORKFLOW_TYPE" \
+            '{
+              ref: $ref,
+              inputs: {
+                prefix: $prefix,
+                region: $region,
+                export_regions: $export_regions,
+                export_compartments: $export_compartments,
+                export_tags: $export_tags,
+                verify_resources: $verify_resources,
+                workflow_type: $workflow_type
+              }
+            }')
+          curl -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/e2e.yaml/dispatches" \
+            -d "$PAYLOAD"
