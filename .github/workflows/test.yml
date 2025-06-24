@@ -1,16 +1,12 @@
-name: Start CD3 Workflow
+name: TEST
 
 on:
+  push:
+    branches:
+      - master
+      - develop
   workflow_dispatch:
     inputs:
-      workflow_type:
-        description: 'Select workflow type'
-        required: true
-        type: choice
-        options:
-          - create_resources
-          - export_resources
-        default: create_resources
       prefix:
         description: 'Custom prefix for tenancy config (e.g., test-123)'
         required: false
@@ -37,39 +33,122 @@ on:
         required: false
         type: boolean
         default: false
+      service_selection:
+        description: |
+          Select the workflow type and services to process.
+          Format: "<Workflow Type>: <Main Option>: <Sub Options>"
+          Example: "Create Identity: Compartments,Groups" creates Identity resources.
+          Choose "Export Resources" for export with no services.
+        required: true
+        type: choice
+        options:
+          - Export Resources
+          - Create Identity: Compartments
+          - Create Identity: Compartments,Groups
+          - Create Identity: Compartments,Groups,Policies
+          - Create Identity: Compartments,Groups,Policies,Users
+          - Create Network: VCN
+          - Create Network: VCN,Subnets
+          - Create Network: VCN,Subnets,Route Tables
+          - Create Network: VCN,Subnets,Route Tables,Security Lists
+          - Create Compute: Instances
+          - Create Compute: Instances,Instance Configurations
+          - Create Storage: Block Volumes
+          - Create Storage: Block Volumes,File Storage
+          - Create Databases: Autonomous Databases
+          - Create Databases: Autonomous Databases,DB Systems
+        default: Export Resources
 
 jobs:
-  Trigger_Main_Workflow:
+  Validate_Inputs:
     runs-on: ubuntu-latest
+    outputs:
+      workflow_type: ${{ steps.validate.outputs.workflow_type }}
+      service_options: ${{ steps.validate.outputs.service_options }}
     steps:
-      - name: Trigger E2E Workflow
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate Service Selection
+        id: validate
         run: |
-          WORKFLOW_TYPE="${{ github.event.inputs.workflow_type }}"
-          PAYLOAD=$(jq -n \
-            --arg ref "${{ github.ref }}" \
-            --arg prefix "${{ github.event.inputs.prefix }}" \
-            --arg region "${{ github.event.inputs.region }}" \
-            --arg export_regions "${{ github.event.inputs.export_regions }}" \
-            --arg export_compartments "${{ github.event.inputs.export_compartments }}" \
-            --arg export_tags "${{ github.event.inputs.export_tags }}" \
-            --arg verify_resources "${{ github.event.inputs.verify_resources }}" \
-            --arg workflow_type "$WORKFLOW_TYPE" \
-            '{
-              ref: $ref,
-              inputs: {
-                prefix: $prefix,
-                region: $region,
-                export_regions: $export_regions,
-                export_compartments: $export_compartments,
-                export_tags: $export_tags,
-                verify_resources: $verify_resources,
-                workflow_type: $workflow_type
-              }
-            }')
-          curl -X POST \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/e2e.yaml/dispatches" \
-            -d "$PAYLOAD"
+          echo "Validating service_selection input..."
+          SELECTION="${{ github.event.inputs.service_selection }}"
+          if [ -z "$SELECTION" ]; then
+            echo "Error: service_selection is empty"
+            exit 1
+          fi
+          # Parse selection
+          if [ "$SELECTION" = "Export Resources" ]; then
+            WORKFLOW_TYPE="export_resources"
+            SERVICE_OPTIONS="{}"
+          else
+            # Extract workflow_type, main_option, sub_options
+            IFS=': ' read -r WORKFLOW MAIN_OPTION SUB_OPTIONS <<< "$SELECTION"
+            if [ "$WORKFLOW" != "Create" ]; then
+              echo "Error: Invalid selection format, must start with 'Create' or be 'Export Resources'"
+              exit 1
+            fi
+            WORKFLOW_TYPE="create_resources"
+            VALID_MAIN_OPTIONS=("Identity" "Network" "Compute" "Storage" "Databases")
+            if [[ ! " ${VALID_MAIN_OPTIONS[*]} " =~ " $MAIN_OPTION " ]]; then
+              echo "Error: Invalid main_option '$MAIN_OPTION'. Valid options: ${VALID_MAIN_OPTIONS[*]}"
+              exit 1
+            fi
+            VALID_SUB_OPTIONS=$(cat << EOF
+            {
+              "Identity": ["Compartments", "Groups", "Policies", "Users"],
+              "Network": ["VCN", "Subnets", "Route Tables", "Security Lists"],
+              "Compute": ["Instances", "Instance Configurations"],
+              "Storage": ["Block Volumes", "File Storage"],
+              "Databases": ["Autonomous Databases", "DB Systems"]
+            }
+            EOF
+            )
+            IFS=',' read -ra SUB_ARRAY <<< "$SUB_OPTIONS"
+            if [ ${#SUB_ARRAY[@]} -eq 0 ]; then
+              echo "Error: At least one sub-option must be selected for create_resources"
+              exit 1
+            fi
+            VALID_SUBS=$(echo "$VALID_SUB_OPTIONS" | jq -r ".[\"$MAIN_OPTION\"][]")
+            for SUB in "${SUB_ARRAY[@]}"; do
+              SUB=$(echo "$SUB" | tr -d '[:space:]')
+              if [[ ! " $VALID_SUBS " =~ " $SUB " ]]; then
+                echo "Error: Invalid sub_option '$SUB' for '$MAIN_OPTION'. Valid options: $VALID_SUBS"
+                exit 1
+              fi
+            done
+            SUB_OPTIONS_JSON=$(printf '%s\n' "${SUB_ARRAY[@]}" | jq -R . | jq -s .)
+            SERVICE_OPTIONS=$(jq -n --arg main "$MAIN_OPTION" --argjson subs "$SUB_OPTIONS_JSON" '{($main): $subs}')
+          fi
+          JSON_PAYLOAD=$(jq -n --arg workflow_type "$WORKFLOW_TYPE" --argjson service_options "$SERVICE_OPTIONS" '{workflow_type: $workflow_type, service_options: $service_options}')
+          echo "workflow_type=$WORKFLOW_TYPE" >> $GITHUB_OUTPUT
+          echo "service_options=$JSON_PAYLOAD" >> $GITHUB_OUTPUT
+          echo "$JSON_PAYLOAD" > /tmp/service_options.json
+          echo "Input validation successful"
+
+  # Rest of the jobs (Deploy_RM_Stack, CD3_Bootstrap, etc.) remain unchanged
+  # Example: Copy Service Options JSON (same as previous solutions)
+  CD3_Bootstrap:
+    runs-on: self-hosted
+    needs: [Deploy_RM_Stack, Validate_Inputs]
+    env:
+      OCI_REGION: us-phoenix-1
+      INSTANCE_NAME: workvm-${{ github.run_id }}
+    steps:
+      # ... (previous steps unchanged)
+      - name: Copy Service Options JSON
+        run: |
+          LOG_FILE="/tmp/copy_service_options_$(date +%F_%H-%M-%S).log"
+          PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+          CONTAINER_NAME="cd3_toolkit"
+          JSON_DEST_PATH="/cd3user/tenancies/$PREFIX/config/service_options.json"
+          echo "${{ needs.Validate_Inputs.outputs.service_options }}" > /tmp/service_options.json
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/service_options.json opc@${{ env.INSTANCE_IP }}:/tmp/service_options.json 2>>"$LOG_FILE" || {
+            echo "Error: Failed to SCP JSON file" | tee -a "$LOG_FILE"; exit 1
+          }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/service_options.json $CONTAINER_NAME:$JSON_DEST_PATH" 2>>"$LOG_FILE" || {
+            echo "Error: Failed to copy JSON file to container" | tee -a "$LOG_FILE"; exit 1
+          }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/service_options.json" 2>>"$LOG_FILE" || {
+            echo "Warning: Failed to remove temporary JSON file" | tee -a "$LOG_FILE"
+          }
+          echo "Service options JSON copied to container at $JSON_DEST_PATH" >> "$LOG_FILE"
+      # ... (remaining steps unchanged)
