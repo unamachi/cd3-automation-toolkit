@@ -1,0 +1,56 @@
+# YAML schema for config.yaml validation
+$schema: http://json-schema.org/draft-07/schema#
+type: object
+required: [cd3_workflows]
+properties:
+  cd3_workflows:
+    type: object
+    required: [create_resources, export_resources]
+    properties:
+      create_resources:
+        $ref: '#/definitions/workflow'
+      export_resources:
+        $ref: '#/definitions/workflow'
+definitions:
+  workflow:
+    type: object
+    required: [enabled, validate_cd3, operations, available_options]
+    properties:
+      enabled:
+        type: boolean
+      validate_cd3:
+        type: boolean
+      operations:
+        type: array
+        items:
+          type: object
+          required: [main_option, sub_option, sub_child_option]
+          properties:
+            main_option:
+              type: string
+            sub_option:
+              type: string
+            sub_child_option:
+              type: string
+      available_options:
+        type: array
+        items:
+          type: object
+          required: [main_option, sub_options, sub_child_options]
+          properties:
+            main_option:
+              type: string
+            sub_options:
+              type: array
+              items:
+                type: string
+            sub_child_options:
+              type: array
+              items:
+                type: object
+                patternProperties:
+                  "^.*$":
+                    type: array
+                    items:
+                      type: string
+additionalProperties: false
