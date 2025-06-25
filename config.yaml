@@ -1,0 +1,24 @@
+cd3_workflows:
+  create_resources:
+    enabled: true
+    validate_cd3: false
+    operations:
+      - main_option: Identity
+        sub_option: Add/Modify/Delete Compartments
+        sub_child_option: ""
+      - main_option: Governance
+        sub_option: Tags
+        sub_child_option: ""
+      - main_option: Cost Management
+        sub_option: Budgets
+        sub_child_option: ""
+  export_resources:
+    enabled: false
+    validate_cd3: false
+    operations:
+      - main_option: Identity
+        sub_option: Export Compartments
+        sub_child_option: ""
+      - main_option: Governance
+        sub_option: Export Tags
+        sub_child_option: ""
