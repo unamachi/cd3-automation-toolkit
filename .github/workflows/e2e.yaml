@@ -591,27 +591,38 @@ jobs:
           OCI_CONFIG_DEST_PATH="/tmp/oci_config"
           KEY_DEST_PATH="/cd3user/tenancies/keys/oci_api_private.pem"
           TEMP_SECRET_FILE="/tmp/secret_temp_$(date +%F_%H-%M-%S).txt"
+          echo "Starting creation of setUpOCI properties at $(date)" | tee -a "$LOG_FILE"
+          # Validate INSTANCE_IP
+          if [ -z "${{ env.INSTANCE_IP }}" ]; then
+            echo "Error: INSTANCE_IP is unset" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+          # Install PyYAML in container
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'pip3 install PyYAML'" 2>>"$LOG_FILE" || { echo "Error: Failed to install PyYAML in container" | tee -a "$LOG_FILE"; exit 1; }
+          # Verify secrets
           for SECRET in TENANCY_SECRET_OCID USER_SECRET_OCID FINGERPRINT_SECRET_OCID API_SECRET_OCID COMPARTMENT_SECRET_OCID; do
             if [ -z "${!SECRET}" ]; then
               echo "Error: $SECRET is unset" | tee -a "$LOG_FILE"
               exit 1
             fi
           done
+          # Retrieve and decode secrets
           for SECRET_NAME in TENANCY_SECRET_OCID USER_SECRET_OCID FINGERPRINT_SECRET_OCID COMPARTMENT_SECRET_OCID API_SECRET_OCID; do
             oci secrets secret-bundle get --secret-id "${!SECRET_NAME}" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to retrieve $SECRET_NAME" | tee -a "$LOG_FILE"; exit 1; }
-            VALUE=$(base64 --decode "$TEMP_SECRET_FILE" 2>>"$LOG_FILE")
+            VALUE=$(base64 --decode "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to decode $SECRET_NAME" | tee -a "$LOG_FILE"; exit 1; })
             case $SECRET_NAME in
               TENANCY_SECRET_OCID) tenancy_ocid=$VALUE ;;
               USER_SECRET_OCID) user_ocid=$VALUE ;;
               FINGERPRINT_SECRET_OCID) fingerprint=$VALUE ;;
               COMPARTMENT_SECRET_OCID) compartment_ocid=$VALUE ;;
               API_SECRET_OCID)
-                echo "$VALUE" > /tmp/oci_api_private.pem
+                echo "$VALUE" > /tmp/oci_api_private.pem 2>>"$LOG_FILE" || { echo "Error: Failed to write private key" | tee -a "$LOG_FILE"; exit 1; }
                 chmod 600 /tmp/oci_api_private.pem 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on private key" | tee -a "$LOG_FILE"; exit 1; }
                 ;;
             esac
           done
-          rm -f "$TEMP_SECRET_FILE" 2>>"$LOG_FILE"
+          rm -f "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || echo "Warning: Failed to remove $TEMP_SECRET_FILE" | tee -a "$LOG_FILE"
+          # Create OCI config
           cat << EOF > /tmp/oci_config
           [DEFAULT]
           user=$user_ocid
@@ -620,9 +631,12 @@ jobs:
           region=$OCI_REGION
           key_file=$KEY_DEST_PATH
           EOF
-          chmod 600 /tmp/oci_config 2>>"$LOG_FILE"
-          WF_TYPE=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'python3 -c \"import yaml; with open(\\\'/tmp/config.yaml\\\') as f: config = yaml.safe_load(f); print(\\\'create_resources\\\' if config[\\\'cd3_workflows\\\'][\\\'create_resources\\\'][\\\'enabled\\\'] else \\\'export_resources\\\')\"'") 2>>"$LOG_FILE"
-          cat << EOF > /tmp/${PREFIX}_setUpOCI.properties
+              chmod 600 /tmp/oci_config 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on oci_config" | tee -a "$LOG_FILE"; exit 1; }
+              # Determine workflow type
+              WF_TYPE=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'python3 -c \"import yaml; with open(\\\'/tmp/config.yaml\\\') as f: config = yaml.safe_load(f); enabled = [(k, v[\\\"enabled\\\"]) for k, v in config[\\\"cd3_workflows\\\"].items()]; enabled_true = [k for k, v in enabled if v]; if len(enabled_true) != 1: raise ValueError(\\\"Exactly one workflow (create_resources or export_resources) must be enabled. Found: \\\" + str(enabled_true)); print(enabled_true[0])\"'") 2>>"$LOG_FILE" || { echo "Error: Failed to determine workflow type" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+              echo "Selected workflow type: $WF_TYPE" | tee -a "$LOG_FILE"
+              # Create properties file
+              cat << EOF > /tmp/${PREFIX}_setUpOCI.properties
           [Default]
           workflow_type=$WF_TYPE
           cd3file=/cd3user/tenancies/$PREFIX/cd3_files/CD3-Blank-template.xlsx
@@ -638,20 +652,34 @@ jobs:
           region=$OCI_REGION
           tf_or_tofu=terraform
           EOF
-          chmod 600 /tmp/${PREFIX}_setUpOCI.properties 2>>"$LOG_FILE"
-          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_api_private.pem opc@${{ env.INSTANCE_IP }}:/tmp/oci_api_private.pem 2>>"$LOG_FILE" || { echo "Error: Failed to SCP private key file" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME mkdir -p /cd3user/tenancies/keys" 2>>"$LOG_FILE" || { echo "Error: Failed to create keys directory in container" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/oci_api_private.pem $CONTAINER_NAME:$KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy private key to container" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME chmod 600 $KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on private key" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/oci_api_private.pem" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary private key file" | tee -a "$LOG_FILE"; exit 1; }
-          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_config opc@${{ env.INSTANCE_IP }}:/tmp/oci_config 2>>"$LOG_FILE" || { echo "Error: Failed to SCP OCI config file" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/oci_config $CONTAINER_NAME:$OCI_CONFIG_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy OCI config to container" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/oci_config" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary OCI config file" | tee -a "$LOG_FILE"; exit 1; }
-          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/${PREFIX}_setUpOCI.properties opc@${{ env.INSTANCE_IP }}:/tmp/${PREFIX}_setUpOCI.properties 2>>"$LOG_FILE" || { echo "Error: Failed to SCP properties file" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/${PREFIX}_setUpOCI.properties $CONTAINER_NAME:$PROPERTIES_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy properties file to container" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/${PREFIX}_setUpOCI.properties" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary properties file" | tee -a "$LOG_FILE"; exit 1; }
-          echo "Properties file copied to $PROPERTIES_DEST_PATH" | tee -a "$LOG_FILE"
-          echo "OCI config file copied to $OCI_CONFIG_DEST_PATH" | tee -a "$LOG_FILE"
+              chmod 600 /tmp/${PREFIX}_setUpOCI.properties 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on properties file" | tee -a "$LOG_FILE"; exit 1; }
+              # Copy files to instance and container with retries
+              for i in {1..3}; do
+                scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_api_private.pem opc@${{ env.INSTANCE_IP }}:/tmp/oci_api_private.pem 2>>"$LOG_FILE" && break || { echo "Warning: Failed to SCP private key file (attempt $i)" | tee -a "$LOG_FILE"; sleep 5; }
+                [ $i -eq 3 ] && { echo "Error: Failed to SCP private key file after 3 attempts" | tee -a "$LOG_FILE"; exit 1; }
+              done
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME mkdir -p /cd3user/tenancies/keys" 2>>"$LOG_FILE" || { echo "Error: Failed to create keys directory in container" | tee -a "$LOG_FILE"; exit 1; }
+              for i in {1..3}; do
+                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/oci_api_private.pem $CONTAINER_NAME:$KEY_DEST_PATH" 2>>"$LOG_FILE" && break || { echo "Warning: Failed to copy private key to container (attempt $i)" | tee -a "$LOG_FILE"; sleep 5; }
+                [ $i -eq 3 ] && { echo "Error: Failed to copy private key to container after 3 attempts" | tee -a "$LOG_FILE"; exit 1; }
+              done
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME chmod 600 $KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on private key" | tee -a "$LOG_FILE"; exit 1; }
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/oci_api_private.pem" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary private key file" | tee -a "$LOG_FILE"
+              for i in {1..3}; do
+                scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_config opc@${{ env.INSTANCE_IP }}:/tmp/oci_config 2>>"$LOG_FILE" && break || { echo "Warning: Failed to SCP OCI config file (attempt $i)" | tee -a "$LOG_FILE"; sleep 5; }
+                [ $i -eq 3 ] && { echo "Error: Failed to SCP OCI config file after 3 attempts" | tee -a "$LOG_FILE"; exit 1; }
+              done
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/oci_config $CONTAINER_NAME:$OCI_CONFIG_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy OCI config to container" | tee -a "$LOG_FILE"; exit 1; }
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/oci_config" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary OCI config file" | tee -a "$LOG_FILE"
+              for i in {1..3}; do
+                scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/${PREFIX}_setUpOCI.properties opc@${{ env.INSTANCE_IP }}:/tmp/${PREFIX}_setUpOCI.properties 2>>"$LOG_FILE" && break || { echo "Warning: Failed to SCP properties file (attempt $i)" | tee -a "$LOG_FILE"; sleep 5; }
+                [ $i -eq 3 ] && { echo "Error: Failed to SCP properties file after 3 attempts" | tee -a "$LOG_FILE"; exit 1; }
+              done
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/${PREFIX}_setUpOCI.properties $CONTAINER_NAME:$PROPERTIES_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy properties file to container" | tee -a "$LOG_FILE"; exit 1; }
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/${PREFIX}_setUpOCI.properties" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary properties file" | tee -a "$LOG_FILE"
+              echo "Properties file copied to $PROPERTIES_DEST_PATH" | tee -a "$LOG_FILE"
+              echo "OCI config file copied to $OCI_CONFIG_DEST_PATH" | tee -a "$LOG_FILE"
+              echo "setUpOCI properties file created successfully" | tee -a "$LOG_FILE"
 
       - name: Validate config.yaml and Generate service_options.json
         run: |
