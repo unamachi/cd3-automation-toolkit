@@ -557,7 +557,7 @@ jobs:
           LOG_FILE="/tmp/cd3_copy_files_$(date +%F_%H-%M-%S).log"
           PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
           CONTAINER_NAME="cd3_toolkit"
-          EXCEL_PATH="testing/excel/CD3-Blank_template.xlsx"
+          EXCEL_PATH="testing/excel/CD3-Blank-template.xlsx"
           CONFIG_PATH="config.yaml"
           EXCEL_DEST_PATH="/cd3user/tenancies/$PREFIX/cd3_files/CD3-Blank-template.xlsx"
           CONFIG_DEST_PATH="/tmp/config.yaml"
