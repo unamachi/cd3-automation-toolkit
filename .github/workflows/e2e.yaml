@@ -697,8 +697,8 @@ jobs:
           echo "OCI config file copied to $OCI_CONFIG_DEST_PATH" | tee -a "$LOG_FILE"
           echo "setUpOCI properties file created successfully" | tee -a "$LOG_FILE"
 
-        - name: Validate config.yaml and Generate service_options.json
-          run: |
+      - name: Validate config.yaml and Generate service_options.json
+        run: |
             LOG_FILE="/tmp/validate_config_$(date +%F_%H-%M-%S).log"
             CONTAINER_NAME="cd3_toolkit"
             PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
