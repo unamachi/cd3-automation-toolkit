@@ -2,22 +2,8 @@ cd3_workflows:
   create_resources:
     enabled: bool
     validate_cd3: bool
-    operations:
-      type: list
-      schema:
-        type: dict
-        schema:
-          main_option: {type: str, required: false}
-          sub_option: {type: str, required: false}
-          sub_child_option: {type: str, required: false}
+    operations: [{main_option: str, sub_option: str, sub_child_option: str}]
   export_resources:
     enabled: bool
     validate_cd3: bool
-    operations:
-      type: list
-      schema:
-        type: dict
-        schema:
-          main_option: {type: str, required: false}
-          sub_option: {type: str, required: false}
-          sub_child_option: {type: str, required: false}
+    operations: [{main_option: str, sub_option: str, sub_child_option: str}]
