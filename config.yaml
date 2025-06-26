@@ -3,9 +3,9 @@ cd3_workflows:
     enabled: true
     validate_cd3: false
     operations:
-      - main_option: compute
-        sub_option: instance
-        sub_child_option: standard
+      - main_option: Identity
+        sub_option: Add/Modify/Delete Compartments
+        sub_child_option: ''
   export_resources:
     enabled: false
     validate_cd3: false
