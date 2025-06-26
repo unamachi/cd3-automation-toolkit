@@ -876,11 +876,11 @@ jobs:
             import yaml
             import sys
             try:
-            wf_type = sys.argv[1]
-            with open('/tmp/config.yaml') as f:
-                config = yaml.safe_load(f)
-            validate_cd3 = config['cd3_workflows'][wf_type]['validate_cd3']
-            print(str(validate_cd3).lower())
+              wf_type = sys.argv[1]
+              with open('/tmp/config.yaml') as f:
+                  config = yaml.safe_load(f)
+              validate_cd3 = config['cd3_workflows'][wf_type]['validate_cd3']
+              print(str(validate_cd3).lower())
             except yaml.YAMLError as e:
                 print(f'Invalid YAML in config.yaml: {str(e)}')
                 sys.exit(1)
