@@ -747,42 +747,69 @@ jobs:
           echo "Creating validation script" | tee -a "$LOG_FILE"
           cat << 'EOF' > validate_config.py
           import yaml
-          from schema import Schema
-          with open('/tmp/config.yaml') as f:
-              config = yaml.safe_load(f)
-          with open('/tmp/config_schema.yaml') as f:
-              schema = Schema(yaml.safe_load(f))
-          schema.validate(config)
-          print('Config validated successfully')
+          from schema import Schema, Optional, SchemaError
+          try:
+              with open('/tmp/config.yaml') as f:
+                  config = yaml.safe_load(f)
+              with open('/tmp/config_schema.yaml') as f:
+                  schema_dict = yaml.safe_load(f)
+              schema = Schema(schema_dict)
+              schema.validate(config)
+              print('Config validated successfully')
+          except SchemaError as e:
+              print(f'Validation failed: {str(e)}')
+              exit(1)
+          except yaml.YAMLError as e:
+              print(f'Invalid YAML in config.yaml or config_schema.yaml: {str(e)}')
+              exit(1)
+          except FileNotFoundError as e:
+              print(f'File not found: {str(e)}')
+              exit(1)
+          except Exception as e:
+              print(f'Unexpected error: {str(e)}')
+              exit(1)
           EOF
-              echo "Copying validation script to instance" | tee -a "$LOG_FILE"
-              scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no validate_config.py opc@${{ env.INSTANCE_IP }}:/tmp/validate_config.py 2>>"$LOG_FILE" || { echo "Error: Failed to SCP validation script to instance" | tee -a "$LOG_FILE"; exit 1; }
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/validate_config.py $CONTAINER_NAME:$VALIDATE_SCRIPT" 2>>"$LOG_FILE" || { echo "Error: Failed to copy validation script to container" | tee -a "$LOG_FILE"; exit 1; }
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/validate_config.py" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary validation script from instance" | tee -a "$LOG_FILE"
-              # Run validation script
-              echo "Validating config.yaml in container" | tee -a "$LOG_FILE"
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 $VALIDATE_SCRIPT" >>"$LOG_FILE" 2>&1 || { echo "Error: Config validation failed" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
-              # Create and copy JSON generation script
-              echo "Creating JSON generation script" | tee -a "$LOG_FILE"
-              cat << 'EOF' > generate_service_options.py
+          echo "Copying validation script to instance" | tee -a "$LOG_FILE"
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no validate_config.py opc@${{ env.INSTANCE_IP }}:/tmp/validate_config.py 2>>"$LOG_FILE" || { echo "Error: Failed to SCP validation script to instance" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/validate_config.py $CONTAINER_NAME:$VALIDATE_SCRIPT" 2>>"$LOG_FILE" || { echo "Error: Failed to copy validation script to container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/validate_config.py" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary validation script from instance" | tee -a "$LOG_FILE"
+          # Run validation script
+          echo "Validating config.yaml in container" | tee -a "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 $VALIDATE_SCRIPT" >>"$LOG_FILE" 2>&1 || { echo "Error: Config validation failed" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+          # Create and copy JSON generation script
+          echo "Creating JSON generation script" | tee -a "$LOG_FILE"
+          cat << 'EOF' > generate_service_options.py
           import yaml
           import json
-          with open('/tmp/config.yaml') as f:
-              config = yaml.safe_load(f)
-          data = {}
-          for wf in ['create_resources', 'export_resources']:
-              if config['cd3_workflows'][wf]['enabled']:
-                  for op in config['cd3_workflows'][wf]['operations']:
-                      if op['main_option']:
-                          sub = op['sub_option'] or ''
-                          sub_child = op['sub_child_option'] or ''
-                          data.setdefault(op['main_option'], []).append(sub + ('->' + sub_child if sub_child else ''))
-                          break
-          if data:
-              with open('/tmp/service_options.json', 'w') as f:
-                  json.dump(data, f, indent=2)
-          else:
-              raise ValueError('No enabled workflow with operations found')
+          try:
+              with open('/tmp/config.yaml') as f:
+                  config = yaml.safe_load(f)
+              data = {}
+              for wf in ['create_resources', 'export_resources']:
+                  if config['cd3_workflows'][wf]['enabled']:
+                      for op in config['cd3_workflows'][wf]['operations']:
+                          if op['main_option']:
+                              sub = op['sub_option'] or ''
+                              sub_child = op['sub_child_option'] or ''
+                              data.setdefault(op['main_option'], []).append(sub + ('->' + sub_child if sub_child else ''))
+                              break
+              if data:
+                  with open('/tmp/service_options.json', 'w') as f:
+                      json.dump(data, f, indent=2)
+              else:
+                  raise ValueError('No enabled workflow with operations found')
+          except yaml.YAMLError as e:
+              print(f'Invalid YAML in config.yaml: {str(e)}')
+              exit(1)
+          except FileNotFoundError as e:
+              print(f'File not found: {str(e)}')
+              exit(1)
+          except KeyError as e:
+              print(f'Missing key in config.yaml: {str(e)}')
+              exit(1)
+          except Exception as e:
+              print(f'Unexpected error: {str(e)}')
+              exit(1)
           EOF
           echo "Copying JSON generation script to instance" | tee -a "$LOG_FILE"
           scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no generate_service_options.py opc@${{ env.INSTANCE_IP }}:/tmp/generate_service_options.py 2>>"$LOG_FILE" || { echo "Error: Failed to SCP JSON generation script to instance" | tee -a "$LOG_FILE"; exit 1; }
