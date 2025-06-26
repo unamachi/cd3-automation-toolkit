@@ -972,7 +972,6 @@ jobs:
             echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
             exit 1
           fi
-          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/service_options.json opc@${{ env.INSTANCE_IP }}:/tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to SCP service_options.json" | tee -a "$LOG_FILE"; exit 1; }
           ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/service_options.json $CONTAINER_NAME:/tmp/service_options.json" 2>>"$LOG_FILE" || { echo "Error: Failed to copy service_options.json to container" | tee -a "$LOG_FILE"; exit 1; }
           USE_OUTDIR_STRUCTURE=false
           if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME test -f $OUTDIR_STRUCTURE_FILE" 2>>"$LOG_FILE"; then
