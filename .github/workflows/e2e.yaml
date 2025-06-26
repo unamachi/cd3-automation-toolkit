@@ -853,11 +853,12 @@ jobs:
 
       - name: Run Workflow with Validation
         run: |
-          LOG_FILE="/tmp/cd3_workflow_$(date +%F_%H-%M-%S).log"
-          CONTAINER_NAME="cd3_toolkit"
+         LOG_FILE="/tmp/cd3_workflow_$(date +%F_%H-%M-%S).log"
+         CONTAINER_NAME="cd3_toolkit"
           PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
           PROPERTIES_PATH="/cd3user/tenancies/$PREFIX/config/${PREFIX}_setUpOCI.properties"
           SERVICE_JSON_PATH="/tmp/service_options.json"
+          VALIDATE_SCRIPT="/tmp/get_validate_cd3.py"
           if [ ! -f /tmp/service_options.json ]; then
             echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
             exit 1
@@ -868,7 +869,37 @@ jobs:
             echo "Error: Workflow type not found in setUpOCI.properties" | tee -a "$LOG_FILE"
             exit 1
           fi
-          VALIDATE=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'python3 -c \"import yaml; with open(\\\'/tmp/config.yaml\\\') as f: config = yaml.safe_load(f); print(config[\\\'cd3_workflows\\\'][\\\'$WF_TYPE\\\'][\\\'validate_cd3\\\'])\"'") 2>>"$LOG_FILE"
+          # Create and copy validate_cd3 script
+          echo "Creating validate_cd3 script" | tee -a "$LOG_FILE"
+          cat << 'EOF' > get_validate_cd3.py
+          import yaml
+          import sys
+          try:
+              wf_type = sys.argv[1]
+              with open('/tmp/config.yaml') as f:
+                  config = yaml.safe_load(f)
+              validate_cd3 = config['cd3_workflows'][wf_type]['validate_cd3']
+              print(str(validate_cd3).lower())
+          except yaml.YAMLError as e:
+              print(f'Invalid YAML in config.yaml: {str(e)}')
+              sys.exit(1)
+          except FileNotFoundError as e:
+              print(f'File not found: {str(e)}')
+              sys.exit(1)
+          except KeyError as e:
+              print(f'Missing key in config.yaml: {str(e)}')
+              sys.exit(1)
+          except Exception as e:
+              print(f'Unexpected error: {str(e)}')
+              sys.exit(1)
+          EOF
+          echo "Copying validate_cd3 script to instance" | tee -a "$LOG_FILE"
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no get_validate_cd3.py opc@${{ env.INSTANCE_IP }}:/tmp/get_validate_cd3.py 2>>"$LOG_FILE" || { echo "Error: Failed to SCP validate_cd3 script to instance" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/get_validate_cd3.py $CONTAINER_NAME:$VALIDATE_SCRIPT" 2>>"$LOG_FILE" || { echo "Error: Failed to copy validate_cd3 script to container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/get_validate_cd3.py" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary validate_cd3 script from instance" | tee -a "$LOG_FILE"
+          # Run validate_cd3 script
+          echo "Reading validate_cd3 from config.yaml" | tee -a "$LOG_FILE"
+          VALIDATE=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 $VALIDATE_SCRIPT $WF_TYPE") 2>>"$LOG_FILE" || { echo "Error: Failed to read validate_cd3 from config.yaml" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
           if [ "$VALIDATE" = "true" ]; then
             echo "Running Validate CD3 for $WF_TYPE..." | tee -a "$LOG_FILE"
             jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
