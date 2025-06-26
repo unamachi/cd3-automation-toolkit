@@ -682,7 +682,16 @@ jobs:
           ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/oci_config $CONTAINER_NAME:$OCI_CONFIG_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy OCI config to container" | tee -a "$LOG_FILE"; exit 1; }
           ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/oci_config" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary OCI config file" | tee -a "$LOG_FILE"
           scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/${PREFIX}_setUpOCI.properties opc@${{ env.INSTANCE_IP }}:/tmp/${PREFIX}_setUpOCI.properties 2>>"$LOG_FILE" || { echo "Error: Failed to SCP properties file" | tee -a "$LOG_FILE"; exit 1; }
+          # Create and verify config directory in container
+          echo "Creating config directory in container" | tee -a "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME mkdir -p /cd3user/tenancies/$PREFIX/config" 2>>"$LOG_FILE" || { echo "Error: Failed to create config directory in container" | tee -a "$LOG_FILE"; exit 1; }
+          echo "Verifying config directory in container" | tee -a "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME ls -ld /cd3user/tenancies/$PREFIX/config" 2>>"$LOG_FILE" || { echo "Error: Config directory not created in container" | tee -a "$LOG_FILE"; exit 1; }
+          # Copy and verify properties file
+          echo "Copying properties file to container" | tee -a "$LOG_FILE"
           ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/${PREFIX}_setUpOCI.properties $CONTAINER_NAME:$PROPERTIES_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy properties file to container" | tee -a "$LOG_FILE"; exit 1; }
+          echo "Verifying properties file in container" | tee -a "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME ls -l $PROPERTIES_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Properties file not found in container" | tee -a "$LOG_FILE"; exit 1; }
           ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/${PREFIX}_setUpOCI.properties" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary properties file" | tee -a "$LOG_FILE"
           echo "Properties file copied to $PROPERTIES_DEST_PATH" | tee -a "$LOG_FILE"
           echo "OCI config file copied to $OCI_CONFIG_DEST_PATH" | tee -a "$LOG_FILE"
