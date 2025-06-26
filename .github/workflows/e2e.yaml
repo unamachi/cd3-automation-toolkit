@@ -972,7 +972,6 @@ jobs:
             echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
             exit 1
           fi
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/service_options.json $CONTAINER_NAME:/tmp/service_options.json" 2>>"$LOG_FILE" || { echo "Error: Failed to copy service_options.json to container" | tee -a "$LOG_FILE"; exit 1; }
           USE_OUTDIR_STRUCTURE=false
           if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME test -f $OUTDIR_STRUCTURE_FILE" 2>>"$LOG_FILE"; then
             USE_OUTDIR_STRUCTURE=true
@@ -1017,7 +1016,7 @@ jobs:
                   break
                 fi
                 echo "Retrying terraform $cmd for $main_option (attempt $((RETRY_COUNT + 1)))" | tee -a "$LOG_FILE"
-                sleep 30
+                sleep 120
               done
               if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
                 break
@@ -1040,7 +1039,7 @@ jobs:
                     echo "Warning: Failed to verify tags for $main_option, continuing" | tee -a "$LOG_FILE"
                   fi
                   ;;
-                "Cost Management")
+                Cost)
                   if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME oci budgets budget list --compartment-id ${{ secrets.COMPARTMENT_SECRET_OCID }} --region $REGION --limit 5" >> "$LOG_FILE" 2>&1; then
                     echo "Warning: Failed to verify budgets for $main_option, continuing" | tee -a "$LOG_FILE"
                   fi
