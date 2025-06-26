@@ -863,6 +863,8 @@ jobs:
               echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
               exit 1
             fi
+            echo "Contents of /tmp/service_options.json:" | tee -a "$LOG_FILE"
+            cat /tmp/service_options.json >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to read /tmp/service_options.json" | tee -a "$LOG_FILE"; exit 1; }
             ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/service_options.json $CONTAINER_NAME:$SERVICE_JSON_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy service_options.json to container" | tee -a "$LOG_FILE"; exit 1; }
             WF_TYPE=$(grep "workflow_type" /tmp/${PREFIX}_setUpOCI.properties | cut -d= -f2)
             if [ -z "$WF_TYPE" ]; then
@@ -876,11 +878,11 @@ jobs:
             import yaml
             import sys
             try:
-              wf_type = sys.argv[1]
-              with open('/tmp/config.yaml') as f:
-                  config = yaml.safe_load(f)
-              validate_cd3 = config['cd3_workflows'][wf_type]['validate_cd3']
-              print(str(validate_cd3).lower())
+                wf_type = sys.argv[1]
+                with open('/tmp/config.yaml') as f:
+                    config = yaml.safe_load(f)
+                validate_cd3 = config['cd3_workflows'][wf_type]['validate_cd3']
+                print(str(validate_cd3).lower())
             except yaml.YAMLError as e:
                 print(f'Invalid YAML in config.yaml: {str(e)}')
                 sys.exit(1)
@@ -912,7 +914,7 @@ jobs:
             fi
             jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
               echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
-              SUB_OPTIONS=$(jq -r --arg main_option="$main_option" '.[$main_option][]' /tmp/service_options.json | tr '\n' ',' | sed 's/,$//')
+              SUB_OPTIONS=$(jq -r --arg main_option="$main_option" ".[\"\$main_option\"][]" /tmp/service_options.json | tr '\n' ',' | sed 's/,$//') 2>>"$LOG_FILE"
               if [ -z "$SUB_OPTIONS" ]; then
                 echo "Warning: No sub-options defined for $main_option, skipping" | tee -a "$LOG_FILE"
                 continue
@@ -1057,29 +1059,29 @@ jobs:
           echo "Terraform configurations applied successfully" | tee -a "$LOG_FILE"
       
 
-      # - name: Cleanup Temporary Files
-      #   if: success()
-      #   run: |
-      #     LOG_FILE="/tmp/cd3_cleanup_$(date +%F_%H-%M-%S).log"
-      #     touch "$LOG_FILE" || { echo "Error: Failed to create cleanup log file" >&2; exit 1; }
-      #     echo "Starting cleanup at $(date)" | tee -a "$LOG_FILE"
-      #     # Remove SSH key
-      #     rm -f ~/.ssh/temp-id_rsa 2>>"$LOG_FILE" || echo "Warning: Failed to remove ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
-      #     # Remove workflow-specific files in /tmp
-      #     rm -f /tmp/service_options.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options.json" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/service_options_tmp.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options_tmp.json" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/oci_config 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/oci_config" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/oci_api_private.pem 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/oci_api_private.pem" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}_setUpOCI.properties 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/${PREFIX}_setUpOCI.properties" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/secret_temp_*.txt 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/secret_temp_*.txt" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/config.yaml 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/config.yaml" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/config_schema.yaml 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/config_schema.yaml" | tee -a "$LOG_FILE"
-      #     # Remove log files
-      #     rm -f /tmp/cd3_excel_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_excel_*.log" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/cd3_properties_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_properties_*.log" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/cd3_service_options_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_service_options_*.log" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/cd3_create_workflow_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_create_workflow_*.log" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/cd3_terraform_apply_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_terraform_apply_*.log" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/cd3_workflow_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_workflow_*.log" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/validate_config_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/validate_config_*.log" | tee -a "$LOG_FILE"
-      #     echo "Cleanup completed successfully" | tee -a "$LOG_FILE"
+      - name: Cleanup Temporary Files
+        if: success()
+        run: |
+          LOG_FILE="/tmp/cd3_cleanup_$(date +%F_%H-%M-%S).log"
+          touch "$LOG_FILE" || { echo "Error: Failed to create cleanup log file" >&2; exit 1; }
+          echo "Starting cleanup at $(date)" | tee -a "$LOG_FILE"
+          # Remove SSH key
+          rm -f ~/.ssh/temp-id_rsa 2>>"$LOG_FILE" || echo "Warning: Failed to remove ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+          # Remove workflow-specific files in /tmp
+          rm -f /tmp/service_options.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options.json" | tee -a "$LOG_FILE"
+          rm -f /tmp/service_options_tmp.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options_tmp.json" | tee -a "$LOG_FILE"
+          rm -f /tmp/oci_config 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/oci_config" | tee -a "$LOG_FILE"
+          rm -f /tmp/oci_api_private.pem 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/oci_api_private.pem" | tee -a "$LOG_FILE"
+          rm -f /tmp/${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}_setUpOCI.properties 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/${PREFIX}_setUpOCI.properties" | tee -a "$LOG_FILE"
+          rm -f /tmp/secret_temp_*.txt 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/secret_temp_*.txt" | tee -a "$LOG_FILE"
+          rm -f /tmp/config.yaml 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/config.yaml" | tee -a "$LOG_FILE"
+          rm -f /tmp/config_schema.yaml 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/config_schema.yaml" | tee -a "$LOG_FILE"
+          # Remove log files
+          rm -f /tmp/cd3_excel_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_excel_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_properties_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_properties_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_service_options_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_service_options_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_create_workflow_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_create_workflow_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_terraform_apply_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_terraform_apply_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_workflow_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_workflow_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/validate_config_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/validate_config_*.log" | tee -a "$LOG_FILE"
+          echo "Cleanup completed successfully" | tee -a "$LOG_FILE"
