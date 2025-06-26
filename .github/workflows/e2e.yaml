@@ -914,7 +914,13 @@ jobs:
             fi
             jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
               echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
-              SUB_OPTIONS=$(jq -r --arg main_option="$main_option" ".[\"\$main_option\"][]" /tmp/service_options.json | tr '\n' ',' | sed 's/,$//') 2>>"$LOG_FILE"
+              # Test jq command for sub-options
+              SUB_OPTIONS=$(jq -r --arg key "$main_option" '.[$key][]' /tmp/service_options.json 2>>"$LOG_FILE" | tr '\n' ',' | sed 's/,$//')
+              if [ $? -ne 0 ]; then
+                echo "Error: Failed to extract sub-options for $main_option from /tmp/service_options.json" | tee -a "$LOG_FILE"
+                cat /tmp/service_options.json >> "$LOG_FILE"
+                exit 1
+              fi
               if [ -z "$SUB_OPTIONS" ]; then
                 echo "Warning: No sub-options defined for $main_option, skipping" | tee -a "$LOG_FILE"
                 continue
