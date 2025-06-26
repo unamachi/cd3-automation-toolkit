@@ -699,62 +699,106 @@ jobs:
 
       - name: Validate config.yaml and Generate service_options.json
         run: |
-            LOG_FILE="/tmp/validate_config_$(date +%F_%H-%M-%S).log"
-            CONTAINER_NAME="cd3_toolkit"
-            PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
-            CONFIG_PATH="/tmp/config.yaml"
-            SCHEMA_PATH="config_schema.yaml"
-            SERVICE_JSON_PATH="/tmp/service_options.json"
-            echo "Starting config.yaml validation and service_options.json generation at $(date)" | tee -a "$LOG_FILE"
-            # Validate INSTANCE_IP
-            if [ -z "${{ env.INSTANCE_IP }}" ]; then
-              echo "Error: INSTANCE_IP is unset" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            # Check schema file existence
-            if [ ! -f "$SCHEMA_PATH" ]; then
-              echo "Error: Schema file $SCHEMA_PATH not found" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            # Check config.yaml existence
-            if [ ! -f "config.yaml" ]; then
-              echo "Error: config.yaml not found in repository" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            # Check Python and pip in container
-            echo "Checking Python and pip in container" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 --version" >>"$LOG_FILE" 2>&1 || { echo "Error: Python3 not found in container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME pip3 --version" >>"$LOG_FILE" 2>&1 || { echo "Error: pip3 not found in container" | tee -a "$LOG_FILE"; exit 1; }
-            # Install PyYAML and schema in container
-            echo "Installing PyYAML and schema in container" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME pip3 install PyYAML schema --no-cache-dir" >>"$LOG_FILE" 2>&1 || { echo "Error: Failed to install Python dependencies in container" | tee -a "$LOG_FILE"; exit 1; }
-            # Verify installation
-            echo "Verifying Python dependencies in container" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME pip3 show PyYAML" >>"$LOG_FILE" 2>&1 || { echo "Error: PyYAML not installed in container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME pip3 show schema" >>"$LOG_FILE" 2>&1 || { echo "Error: schema not installed in container" | tee -a "$LOG_FILE"; exit 1; }
-            # Copy config.yaml and config_schema.yaml to instance and container
-            echo "Copying config.yaml to instance" | tee -a "$LOG_FILE"
-            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no "config.yaml" opc@${{ env.INSTANCE_IP }}:/tmp/config.yaml 2>>"$LOG_FILE" || { echo "Error: Failed to SCP config.yaml to instance" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/config.yaml $CONTAINER_NAME:$CONFIG_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy config.yaml to container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/config.yaml" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary config.yaml from instance" | tee -a "$LOG_FILE"
-            echo "Copying config_schema.yaml to instance" | tee -a "$LOG_FILE"
-            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no "$SCHEMA_PATH" opc@${{ env.INSTANCE_IP }}:/tmp/config_schema.yaml 2>>"$LOG_FILE" || { echo "Error: Failed to SCP config_schema.yaml to instance" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/config_schema.yaml $CONTAINER_NAME:/tmp/config_schema.yaml" 2>>"$LOG_FILE" || { echo "Error: Failed to copy config_schema.yaml to container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/config_schema.yaml" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary config_schema.yaml from instance" | tee -a "$LOG_FILE"
-            # Validate config.yaml
-            echo "Validating config.yaml in container" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 -c 'import yaml; from schema import Schema; with open(\"$CONFIG_PATH\") as f: config = yaml.safe_load(f); with open(\"/tmp/config_schema.yaml\") as f: schema = Schema(yaml.safe_load(f)); schema.validate(config); print(\"Config validated successfully\")'" >>"$LOG_FILE" 2>&1 || { echo "Error: Config validation failed" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
-            # Generate service_options.json
-            echo "Generating service_options.json in container" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 -c 'import yaml, json; with open(\"$CONFIG_PATH\") as f: config = yaml.safe_load(f); data = {}; for wf in [\"create_resources\", \"export_resources\"]: if config[\"cd3_workflows\"][wf][\"enabled\"]: for op in config[\"cd3_workflows\"][wf][\"operations\"]: if op[\"main_option\"]: sub = op[\"sub_option\"] or \"\"; sub_child = op[\"sub_child_option\"] or \"\"; data.setdefault(op[\"main_option\"], []).append(sub + (\"->\" + sub_child if sub_child else \"\")); break; if data: with open(\"$SERVICE_JSON_PATH\", \"w\") as f: json.dump(data, f, indent=2); else: raise ValueError(\"No enabled workflow with operations found\")'" >>"$LOG_FILE" 2>&1 || { echo "Error: Failed to generate service_options.json" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
-            # Copy service_options.json back to instance and runner
-            echo "Copying service_options.json from container to instance" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp $CONTAINER_NAME:$SERVICE_JSON_PATH /tmp/service_options.json" 2>>"$LOG_FILE" || { echo "Error: Failed to copy service_options.json from container" | tee -a "$LOG_FILE"; exit 1; }
-            echo "Copying service_options.json to runner" | tee -a "$LOG_FILE"
-            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }}:/tmp/service_options.json /tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to SCP service_options.json to runner" | tee -a "$LOG_FILE"; exit 1; }
-            echo "Generated service_options.json:" | tee -a "$LOG_FILE"
-            cat /tmp/service_options.json >> "$LOG_FILE"
-            
+          LOG_FILE="/tmp/validate_config_$(date +%F_%H-%M-%S).log"
+          CONTAINER_NAME="cd3_toolkit"
+          PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+          CONFIG_PATH="/tmp/config.yaml"
+          SCHEMA_PATH="config_schema.yaml"
+          SERVICE_JSON_PATH="/tmp/service_options.json"
+          VALIDATE_SCRIPT="/tmp/validate_config.py"
+          GENERATE_SCRIPT="/tmp/generate_service_options.py"
+          echo "Starting config.yaml validation and service_options.json generation at $(date)" | tee -a "$LOG_FILE"
+          # Validate INSTANCE_IP
+          if [ -z "${{ env.INSTANCE_IP }}" ]; then
+            echo "Error: INSTANCE_IP is unset" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+          # Check schema file existence
+          if [ ! -f "$SCHEMA_PATH" ]; then
+            echo "Error: Schema file $SCHEMA_PATH not found" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+          # Check config.yaml existence
+          if [ ! -f "config.yaml" ]; then
+            echo "Error: config.yaml not found in repository" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+          # Check Python and pip in container
+          echo "Checking Python and pip in container" | tee -a "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 --version" >>"$LOG_FILE" 2>&1 || { echo "Error: Python3 not found in container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME pip3 --version" >>"$LOG_FILE" 2>&1 || { echo "Error: pip3 not found in container" | tee -a "$LOG_FILE"; exit 1; }
+          # Install PyYAML and schema in container
+          echo "Installing PyYAML and schema in container" | tee -a "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME pip3 install PyYAML schema --no-cache-dir" >>"$LOG_FILE" 2>&1 || { echo "Error: Failed to install Python dependencies in container" | tee -a "$LOG_FILE"; exit 1; }
+          # Verify installation
+          echo "Verifying Python dependencies in container" | tee -a "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME pip3 show PyYAML" >>"$LOG_FILE" 2>&1 || { echo "Error: PyYAML not installed in container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME pip3 show schema" >>"$LOG_FILE" 2>&1 || { echo "Error: schema not installed in container" | tee -a "$LOG_FILE"; exit 1; }
+          # Copy config.yaml and config_schema.yaml to instance and container
+          echo "Copying config.yaml to instance" | tee -a "$LOG_FILE"
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no "config.yaml" opc@${{ env.INSTANCE_IP }}:/tmp/config.yaml 2>>"$LOG_FILE" || { echo "Error: Failed to SCP config.yaml to instance" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/config.yaml $CONTAINER_NAME:$CONFIG_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy config.yaml to container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/config.yaml" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary config.yaml from instance" | tee -a "$LOG_FILE"
+          echo "Copying config_schema.yaml to instance" | tee -a "$LOG_FILE"
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no "$SCHEMA_PATH" opc@${{ env.INSTANCE_IP }}:/tmp/config_schema.yaml 2>>"$LOG_FILE" || { echo "Error: Failed to SCP config_schema.yaml to instance" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/config_schema.yaml $CONTAINER_NAME:/tmp/config_schema.yaml" 2>>"$LOG_FILE" || { echo "Error: Failed to copy config_schema.yaml to container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/config_schema.yaml" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary config_schema.yaml from instance" | tee -a "$LOG_FILE"
+          # Create and copy validation script
+          echo "Creating validation script" | tee -a "$LOG_FILE"
+          cat << 'EOF' > validate_config.py
+          import yaml
+          from schema import Schema
+          with open('/tmp/config.yaml') as f:
+              config = yaml.safe_load(f)
+          with open('/tmp/config_schema.yaml') as f:
+              schema = Schema(yaml.safe_load(f))
+          schema.validate(config)
+          print('Config validated successfully')
+          EOF
+              echo "Copying validation script to instance" | tee -a "$LOG_FILE"
+              scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no validate_config.py opc@${{ env.INSTANCE_IP }}:/tmp/validate_config.py 2>>"$LOG_FILE" || { echo "Error: Failed to SCP validation script to instance" | tee -a "$LOG_FILE"; exit 1; }
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/validate_config.py $CONTAINER_NAME:$VALIDATE_SCRIPT" 2>>"$LOG_FILE" || { echo "Error: Failed to copy validation script to container" | tee -a "$LOG_FILE"; exit 1; }
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/validate_config.py" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary validation script from instance" | tee -a "$LOG_FILE"
+              # Run validation script
+              echo "Validating config.yaml in container" | tee -a "$LOG_FILE"
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 $VALIDATE_SCRIPT" >>"$LOG_FILE" 2>&1 || { echo "Error: Config validation failed" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+              # Create and copy JSON generation script
+              echo "Creating JSON generation script" | tee -a "$LOG_FILE"
+              cat << 'EOF' > generate_service_options.py
+          import yaml
+          import json
+          with open('/tmp/config.yaml') as f:
+              config = yaml.safe_load(f)
+          data = {}
+          for wf in ['create_resources', 'export_resources']:
+              if config['cd3_workflows'][wf]['enabled']:
+                  for op in config['cd3_workflows'][wf]['operations']:
+                      if op['main_option']:
+                          sub = op['sub_option'] or ''
+                          sub_child = op['sub_child_option'] or ''
+                          data.setdefault(op['main_option'], []).append(sub + ('->' + sub_child if sub_child else ''))
+                          break
+          if data:
+              with open('/tmp/service_options.json', 'w') as f:
+                  json.dump(data, f, indent=2)
+          else:
+              raise ValueError('No enabled workflow with operations found')
+          EOF
+          echo "Copying JSON generation script to instance" | tee -a "$LOG_FILE"
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no generate_service_options.py opc@${{ env.INSTANCE_IP }}:/tmp/generate_service_options.py 2>>"$LOG_FILE" || { echo "Error: Failed to SCP JSON generation script to instance" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/generate_service_options.py $CONTAINER_NAME:$GENERATE_SCRIPT" 2>>"$LOG_FILE" || { echo "Error: Failed to copy JSON generation script to container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/generate_service_options.py" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary JSON generation script from instance" | tee -a "$LOG_FILE"
+          # Run JSON generation script
+          echo "Generating service_options.json in container" | tee -a "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 $GENERATE_SCRIPT" >>"$LOG_FILE" 2>&1 || { echo "Error: Failed to generate service_options.json" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+          # Copy service_options.json back to instance and runner
+          echo "Copying service_options.json from container to instance" | tee -a "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp $CONTAINER_NAME:$SERVICE_JSON_PATH /tmp/service_options.json" 2>>"$LOG_FILE" || { echo "Error: Failed to copy service_options.json from container" | tee -a "$LOG_FILE"; exit 1; }
+          echo "Copying service_options.json to runner" | tee -a "$LOG_FILE"
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }}:/tmp/service_options.json /tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to SCP service_options.json to runner" | tee -a "$LOG_FILE"; exit 1; }
+          echo "Generated service_options.json:" | tee -a "$LOG_FILE"
+          cat /tmp/service_options.json >> "$LOG_FILE"
+
       - name: Run Workflow with Validation
         run: |
           LOG_FILE="/tmp/cd3_workflow_$(date +%F_%H-%M-%S).log"
