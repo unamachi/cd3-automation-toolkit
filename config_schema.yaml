@@ -2,8 +2,22 @@ cd3_workflows:
   create_resources:
     enabled: bool
     validate_cd3: bool
-    operations: [Optional({Optional('main_option'): str, Optional('sub_option'): str, Optional('sub_child_option'): str})]
+    operations:
+      type: list
+      schema:
+        type: dict
+        schema:
+          main_option: {type: str, required: false}
+          sub_option: {type: str, required: false}
+          sub_child_option: {type: str, required: false}
   export_resources:
     enabled: bool
     validate_cd3: bool
-    operations: [Optional({Optional('main_option'): str, Optional('sub_option'): str, Optional('sub_child_option'): str})]
+    operations:
+      type: list
+      schema:
+        type: dict
+        schema:
+          main_option: {type: str, required: false}
+          sub_option: {type: str, required: false}
+          sub_child_option: {type: str, required: false}
