@@ -756,24 +756,24 @@ jobs:
               schema = Schema({
                   'cd3_workflows': {
                       'create_resources': {
-                          'enabled': schema_dict['cd3_workflows']['create_resources']['enabled'],
-                          'validate_cd3': schema_dict['cd3_workflows']['create_resources']['validate_cd3'],
+                          'enabled': bool,
+                          'validate_cd3': bool,
                           Optional('operations'): [
                               Optional({
-                                  Optional('main_option'): schema_dict['cd3_workflows']['create_resources']['operations']['schema']['schema']['main_option']['type'],
-                                  Optional('sub_option'): schema_dict['cd3_workflows']['create_resources']['operations']['schema']['schema']['sub_option']['type'],
-                                  Optional('sub_child_option'): schema_dict['cd3_workflows']['create_resources']['operations']['schema']['schema']['sub_child_option']['type']
+                                  Optional('main_option'): str,
+                                  Optional('sub_option'): str,
+                                  Optional('sub_child_option'): str
                               })
                           ]
                       },
                       'export_resources': {
-                          'enabled': schema_dict['cd3_workflows']['export_resources']['enabled'],
-                          'validate_cd3': schema_dict['cd3_workflows']['export_resources']['validate_cd3'],
+                          'enabled': bool,
+                          'validate_cd3': bool,
                           Optional('operations'): [
                               Optional({
-                                  Optional('main_option'): schema_dict['cd3_workflows']['export_resources']['operations']['schema']['schema']['main_option']['type'],
-                                  Optional('sub_option'): schema_dict['cd3_workflows']['export_resources']['operations']['schema']['schema']['sub_option']['type'],
-                                  Optional('sub_child_option'): schema_dict['cd3_workflows']['export_resources']['operations']['schema']['schema']['sub_child_option']['type']
+                                  Optional('main_option'): str,
+                                  Optional('sub_option'): str,
+                                  Optional('sub_child_option'): str
                               })
                           ]
                       }
@@ -789,9 +789,6 @@ jobs:
               exit(1)
           except FileNotFoundError as e:
               print(f'File not found: {str(e)}')
-              exit(1)
-          except KeyError as e:
-              print(f'Missing key in schema definition: {str(e)}')
               exit(1)
           except Exception as e:
               print(f'Unexpected error: {str(e)}')
