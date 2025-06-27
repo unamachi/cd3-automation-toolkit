@@ -909,7 +909,9 @@ jobs:
             jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
               echo "Validating main_option: $main_option" | tee -a "$LOG_FILE"
               VALIDATE_SUB_OPTION="Validate $main_option"
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --workflow_type=$WF_TYPE --main_options=\"Validate\" --sub_options=\"$VALIDATE_SUB_OPTION\"'" >> "$LOG_FILE" 2>&1 || { echo "Error: Validation failed for $main_option" | tee -a "$LOG_FILE"; exit 1; }
+              CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --workflow_type=$WF_TYPE --main_options=\"Validate\" --sub_options=\"$VALIDATE_SUB_OPTION\""
+              echo "Executing: $CMD" | tee -a "$LOG_FILE"
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Validation failed for $main_option" | tee -a "$LOG_FILE"; exit 1; }
             done
           fi
           jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
@@ -933,7 +935,9 @@ jobs:
                 continue
               fi
               echo "Sub-options for $main_option: $SUB_OPTIONS" | tee -a "$LOG_FILE"
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --workflow_type=$WF_TYPE --devops=true --main_options=$main_option --sub_options=\"$SUB_OPTIONS\"'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run workflow for $main_option" | tee -a "$LOG_FILE"; exit 1; }
+              CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --workflow_type=$WF_TYPE --devops=true --main_options=$main_option --sub_options=\"$SUB_OPTIONS\""
+              echo "Executing: $CMD" | tee -a "$LOG_FILE"
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run workflow for $main_option" | tee -a "$LOG_FILE"; exit 1; }
             else
               # Handle object with sub_options and sub_child_options
               jq -r --arg key "$main_option" '.[$key] | to_entries[] | .key' /tmp/service_options.json 2>>"$LOG_FILE" | while read -r sub_option; do
@@ -944,17 +948,19 @@ jobs:
                   cat /tmp/service_options.json >> "$LOG_FILE"
                   exit 1
                 fi
-                if [ -z "$SUB_CHILD_OPTIONS" ]; then
-                  echo "Warning: No sub-child-options defined for $main_option:$sub_option, using sub_option only" | tee -a "$LOG_FILE"
-                  SUB_CHILD_OPTIONS=""
-                fi
                 echo "Sub-child-options for $main_option:$sub_option: $SUB_CHILD_OPTIONS" | tee -a "$LOG_FILE"
-                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --workflow_type=$WF_TYPE --devops=true --main_options=$main_option --sub_options=\"$sub_option\" --sub_child_options=\"$SUB_CHILD_OPTIONS\"'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run workflow for $main_option:$sub_option" | tee -a "$LOG_FILE"; exit 1; }
+                CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --workflow_type=$WF_TYPE --devops=true --main_options=$main_option --sub_options=\"$sub_option\""
+                if [ -n "$SUB_CHILD_OPTIONS" ]; then
+                  CMD="$CMD --sub_child_options=\"$SUB_CHILD_OPTIONS\""
+                fi
+                echo "Executing: $CMD" | tee -a "$LOG_FILE"
+                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run workflow for $main_option:$sub_option" | tee -a "$LOG_FILE"; exit 1; }
               done
             fi
             echo "Workflow completed for $main_option" | tee -a "$LOG_FILE"
           done
           echo "Workflow completed successfully" | tee -a "$LOG_FILE"
+
 
       - name: Retrieve Exported Files
         if: always()
