@@ -2,8 +2,8 @@ cd3_workflows:
   create_resources:
     enabled: bool
     validate_cd3: bool
-    operations: [{main_option: str, sub_option: str, sub_child_option: str}]
+    operations: [{main_option: str, sub_options: [str], sub_child_options: [[str]]}]
   export_resources:
     enabled: bool
     validate_cd3: bool
-    operations: [{main_option: str, sub_option: str, sub_child_option: str}]
+    operations: [{main_option: str, sub_options: [str], sub_child_options: [[str]]}]
