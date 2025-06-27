@@ -32,30 +32,15 @@ cd3_workflows:
           - Add/Modify/Delete VLANs
           - Customer Connectivity
         sub_child_options:
-          # For Security Rules
-          - main_sub_option: Security Rules
-            options:
-              - Export Security Rules (From OCI into SecRulesinOCI sheet)
-              - Add/Modify/Delete Security Rules (Reads SecRulesinOCI sheet)
-          # For Route Rules
-          - main_sub_option: Route Rules
-            options:
-              - Export Route Rules (From OCI into RouteRulesinOCI sheet)
-              - Add/Modify/Delete Route Rules (Reads RouteRulesinOCI sheet)
-          # For DRG Route Rules
-          - main_sub_option: DRG Route Rules
-            options:
-              - Export DRG Route Rules (From OCI into DRGRouteRulesinOCI sheet)
-              - Add/Modify/Delete DRG Route Rules (Reads DRGRouteRulesinOCI sheet)
-          # For Network Security Groups
-          - main_sub_option: Network Security Groups
-            options:
-              - Export NSGs (From OCI into NSGs sheet)
-              - Add/Modify/Delete NSGs (Reads NSGs sheet)
-          # For Customer Connectivity
-          - main_sub_option: Customer Connectivity
-            options:
-              - Create Remote Peering Connections
+          - Export Security Rules (From OCI into SecRulesinOCI sheet)
+          - Add/Modify/Delete Security Rules (Reads SecRulesinOCI sheet)
+          - Export Route Rules (From OCI into RouteRulesinOCI sheet)
+          - Add/Modify/Delete Route Rules (Reads RouteRulesinOCI sheet)
+          - Export DRG Route Rules (From OCI into DRGRouteRulesinOCI sheet)
+          - Add/Modify/Delete DRG Route Rules (Reads DRGRouteRulesinOCI sheet)
+          - Export NSGs (From OCI into NSGs sheet)
+          - Add/Modify/Delete NSGs (Reads NSGs sheet)
+          - Create Remote Peering Connections
       # OCI Firewall Operations
       - main_option: OCI Firewall
         sub_options:
@@ -64,22 +49,19 @@ cd3_workflows:
           - Add/Modify/Delete Firewall
           - Clone Firewall Policy
         sub_child_options:
-          # For Add/Modify/Delete Firewall Policy
-          - main_sub_option: Add/Modify/Delete Firewall Policy
-            options:
-              - Execute All
-              - Add/Modify/Delete Policy
-              - Add/Modify/Delete Service
-              - Add/Modify/Delete Service-list
-              - Add/Modify/Delete Application
-              - Add/Modify/Delete Application-list
-              - Add/Modify/Delete Address-list
-              - Add/Modify/Delete Url-list
-              - Add/Modify/Delete Security rules
-              - Add/Modify/Delete Mapped Secrets
-              - Add/Modify/Delete Decryption Rules
-              - Add/Modify/Delete Decryption Profile
-              - Add/Modify/Delete Tunnel Inspection Rules
+          - Execute All
+          - Add/Modify/Delete Policy
+          - Add/Modify/Delete Service
+          - Add/Modify/Delete Service-list
+          - Add/Modify/Delete Application
+          - Add/Modify/Delete Application-list
+          - Add/Modify/Delete Address-list
+          - Add/Modify/Delete Url-list
+          - Add/Modify/Delete Security rules
+          - Add/Modify/Delete Mapped Secrets
+          - Add/Modify/Delete Decryption Rules
+          - Add/Modify/Delete Decryption Profile
+          - Add/Modify/Delete Tunnel Inspection Rules
       # DNS Management Operations
       - main_option: DNS Management
         sub_options:
@@ -118,7 +100,7 @@ cd3_workflows:
       # Developer Services Operations
       - main_option: Developer Services
         sub_options:
-          - Upload current terraform files/state to Resource Manager  # Only included if tf_or_tofu is 'terraform'
+          - Upload current terraform files/state to Resource Manager
           - Add/Modify/Delete OKE Cluster and Nodepools
       # Security Services Operations
       - main_option: Security
@@ -149,21 +131,12 @@ cd3_workflows:
           - ShowOCI Report
           - OCI FSDR
         sub_child_options:
-          # For CIS Compliance Check Script
-          - main_sub_option: CIS Compliance Check Script
-            options:
-              - Download latest compliance checking script
-              - Execute compliance checking script
-          # For ShowOCI Report
-          - main_sub_option: ShowOCI Report
-            options:
-              - Download Latest ShowOCI Script
-              - Execute ShowOCI Script
-          # For OCI FSDR
-          - main_sub_option: OCI FSDR
-            options:
-              - Export DR Plan
-              - Update DR Plan
+          - Download latest compliance checking script
+          - Execute compliance checking script
+          - Download Latest ShowOCI Script
+          - Execute ShowOCI Script
+          - Export DR Plan
+          - Update DR Plan
       # Validation Options for create_resources
       - main_option: Validate CD3
         sub_options:
