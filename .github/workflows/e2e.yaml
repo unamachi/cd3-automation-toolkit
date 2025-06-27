@@ -853,71 +853,78 @@ jobs:
 
       - name: Run Workflow with Validation
         run: |
-            LOG_FILE="/tmp/cd3_workflow_$(date +%F_%H-%M-%S).log"
-            CONTAINER_NAME="cd3_toolkit"
-            PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
-            PROPERTIES_PATH="/cd3user/tenancies/$PREFIX/config/${PREFIX}_setUpOCI.properties"
-            SERVICE_JSON_PATH="/tmp/service_options.json"
-            VALIDATE_SCRIPT="/tmp/get_validate_cd3.py"
-            if [ ! -f /tmp/service_options.json ]; then
-              echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            echo "Contents of /tmp/service_options.json:" | tee -a "$LOG_FILE"
-            cat /tmp/service_options.json >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to read /tmp/service_options.json" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/service_options.json $CONTAINER_NAME:$SERVICE_JSON_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy service_options.json to container" | tee -a "$LOG_FILE"; exit 1; }
-            WF_TYPE=$(grep "workflow_type" /tmp/${PREFIX}_setUpOCI.properties | cut -d= -f2)
-            if [ -z "$WF_TYPE" ]; then
-              echo "Error: Workflow type not found in setUpOCI.properties" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            echo "Workflow type: $WF_TYPE" | tee -a "$LOG_FILE"
-            # Create and copy validate_cd3 script
-            echo "Creating validate_cd3 script" | tee -a "$LOG_FILE"
-            cat << EOF > get_validate_cd3.py
-            import yaml
-            import sys
-            try:
-                wf_type = sys.argv[1]
-                with open('/tmp/config.yaml') as f:
-                    config = yaml.safe_load(f)
-                validate_cd3 = config['cd3_workflows'][wf_type]['validate_cd3']
-                print(str(validate_cd3).lower())
-            except yaml.YAMLError as e:
-                print(f'Invalid YAML in config.yaml: {str(e)}')
-                sys.exit(1)
-            except FileNotFoundError as e:
-                print(f'File not found: {str(e)}')
-                sys.exit(1)
-            except KeyError as e:
-                print(f'Missing key in config.yaml: {str(e)}')
-                sys.exit(1)
-            except Exception as e:
-                print(f'Unexpected error: {str(e)}')
-                sys.exit(1)
-            EOF
-            echo "Copying validate_cd3 script to instance" | tee -a "$LOG_FILE"
-            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no get_validate_cd3.py opc@${{ env.INSTANCE_IP }}:/tmp/get_validate_cd3.py 2>>"$LOG_FILE" || { echo "Error: Failed to SCP validate_cd3 script to instance" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/get_validate_cd3.py $CONTAINER_NAME:$VALIDATE_SCRIPT" 2>>"$LOG_FILE" || { echo "Error: Failed to copy validate_cd3 script to container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/get_validate_cd3.py" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary validate_cd3 script from instance" | tee -a "$LOG_FILE"
-            # Run validate_cd3 script
-            echo "Reading validate_cd3 from config.yaml" | tee -a "$LOG_FILE"
-            VALIDATE=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 $VALIDATE_SCRIPT $WF_TYPE") 2>>"$LOG_FILE" || { echo "Error: Failed to read validate_cd3 from config.yaml" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
-            echo "Validate CD3: $VALIDATE" | tee -a "$LOG_FILE"
-            if [ "$VALIDATE" = "true" ]; then
-              echo "Running Validate CD3 for $WF_TYPE..." | tee -a "$LOG_FILE"
-              jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
-                echo "Validating main_option: $main_option" | tee -a "$LOG_FILE"
-                VALIDATE_SUB_OPTION="Validate $main_option"
-                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --workflow_type=$WF_TYPE --main_options=\"Validate\" --sub_options=\"$VALIDATE_SUB_OPTION\"'" >> "$LOG_FILE" 2>&1 || { echo "Error: Validation failed for $main_option" | tee -a "$LOG_FILE"; exit 1; }
-              done
-            fi
+          LOG_FILE="/tmp/cd3_workflow_$(date +%F_%H-%M-%S).log"
+          CONTAINER_NAME="cd3_toolkit"
+          PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+          PROPERTIES_PATH="/cd3user/tenancies/$PREFIX/config/${PREFIX}_setUpOCI.properties"
+          SERVICE_JSON_PATH="/tmp/service_options.json"
+          VALIDATE_SCRIPT="/tmp/get_validate_cd3.py"
+          if [ ! -f /tmp/service_options.json ]; then
+            echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+          echo "Contents of /tmp/service_options.json:" | tee -a "$LOG_FILE"
+          cat /tmp/service_options.json >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to read /tmp/service_options.json" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/service_options.json $CONTAINER_NAME:$SERVICE_JSON_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy service_options.json to container" | tee -a "$LOG_FILE"; exit 1; }
+          WF_TYPE=$(grep "workflow_type" /tmp/${PREFIX}_setUpOCI.properties | cut -d= -f2)
+          if [ -z "$WF_TYPE" ]; then
+            echo "Error: Workflow type not found in setUpOCI.properties" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+          echo "Workflow type: $WF_TYPE" | tee -a "$LOG_FILE"
+          # Create and copy validate_cd3 script
+          echo "Creating validate_cd3 script" | tee -a "$LOG_FILE"
+          cat << EOF > get_validate_cd3.py
+          import yaml
+          import sys
+          try:
+              wf_type = sys.argv[1]
+              with open('/tmp/config.yaml') as f:
+                  config = yaml.safe_load(f)
+              validate_cd3 = config['cd3_workflows'][wf_type]['validate_cd3']
+              print(str(validate_cd3).lower())
+          except yaml.YAMLError as e:
+              print(f'Invalid YAML in config.yaml: {str(e)}')
+              sys.exit(1)
+          except FileNotFoundError as e:
+              print(f'File not found: {str(e)}')
+              sys.exit(1)
+          except KeyError as e:
+              print(f'Missing key in config.yaml: {str(e)}')
+              sys.exit(1)
+          except Exception as e:
+              print(f'Unexpected error: {str(e)}')
+              sys.exit(1)
+          EOF
+          echo "Copying validate_cd3 script to instance" | tee -a "$LOG_FILE"
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no get_validate_cd3.py opc@${{ env.INSTANCE_IP }}:/tmp/get_validate_cd3.py 2>>"$LOG_FILE" || { echo "Error: Failed to SCP validate_cd3 script to instance" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/get_validate_cd3.py $CONTAINER_NAME:$VALIDATE_SCRIPT" 2>>"$LOG_FILE" || { echo "Error: Failed to copy validate_cd3 script to container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/get_validate_cd3.py" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary validate_cd3 script from instance" | tee -a "$LOG_FILE"
+          # Run validate_cd3 script
+          echo "Reading validate_cd3 from config.yaml" | tee -a "$LOG_FILE"
+          VALIDATE=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 $VALIDATE_SCRIPT $WF_TYPE") 2>>"$LOG_FILE" || { echo "Error: Failed to read validate_cd3 from config.yaml" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+          echo "Validate CD3: $VALIDATE" | tee -a "$LOG_FILE"
+          if [ "$VALIDATE" = "true" ]; then
+            echo "Running Validate CD3 for $WF_TYPE..." | tee -a "$LOG_FILE"
             jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
-              echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
-              # Test jq command for sub-options
+              echo "Validating main_option: $main_option" | tee -a "$LOG_FILE"
+              VALIDATE_SUB_OPTION="Validate $main_option"
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --workflow_type=$WF_TYPE --main_options=\"Validate\" --sub_options=\"$VALIDATE_SUB_OPTION\"'" >> "$LOG_FILE" 2>&1 || { echo "Error: Validation failed for $main_option" | tee -a "$LOG_FILE"; exit 1; }
+            done
+          fi
+          jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
+            echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
+            # Check if main_option value is an array or object
+            IS_ARRAY=$(jq -r --arg key "$main_option" '.[$key] | if type == "array" then "true" else "false" end' /tmp/service_options.json 2>>"$LOG_FILE")
+            if [ $? -ne 0 ]; then
+              echo "Error: Failed to check type for $main_option in /tmp/service_options.json" | tee -a "$LOG_FILE"
+              cat /tmp/service_options.json >> "$LOG_FILE"
+              exit 1
+            fi
+            if [ "$IS_ARRAY" = "true" ]; then
               SUB_OPTIONS=$(jq -r --arg key "$main_option" '.[$key][]' /tmp/service_options.json 2>>"$LOG_FILE" | tr '\n' ',' | sed 's/,$//')
               if [ $? -ne 0 ]; then
-                echo "Error: Failed to extract sub-options for $main_option from /tmp/service_options.json" | tee -a "$LOG_FILE"
+                echo "Error: Failed to extract sub-options for $main_option" | tee -a "$LOG_FILE"
                 cat /tmp/service_options.json >> "$LOG_FILE"
                 exit 1
               fi
@@ -926,10 +933,28 @@ jobs:
                 continue
               fi
               echo "Sub-options for $main_option: $SUB_OPTIONS" | tee -a "$LOG_FILE"
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=true --main_options=$main_option --sub_options=\"$SUB_OPTIONS\"'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run workflow for $main_option" | tee -a "$LOG_FILE"; exit 1; }
-              echo "Workflow completed for $main_option" | tee -a "$LOG_FILE"
-            done
-            echo "Workflow completed successfully" | tee -a "$LOG_FILE"
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --workflow_type=$WF_TYPE --devops=true --main_options=$main_option --sub_options=\"$SUB_OPTIONS\"'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run workflow for $main_option" | tee -a "$LOG_FILE"; exit 1; }
+            else
+              # Handle object with sub_options and sub_child_options
+              jq -r --arg key "$main_option" '.[$key] | to_entries[] | .key' /tmp/service_options.json 2>>"$LOG_FILE" | while read -r sub_option; do
+                echo "Processing sub_option: $sub_option for $main_option" | tee -a "$LOG_FILE"
+                SUB_CHILD_OPTIONS=$(jq -r --arg key "$main_option" --arg subkey "$sub_option" '.[$key][$subkey][]' /tmp/service_options.json 2>>"$LOG_FILE" | tr '\n' ',' | sed 's/,$//')
+                if [ $? -ne 0 ]; then
+                  echo "Error: Failed to extract sub-child-options for $main_option:$sub_option" | tee -a "$LOG_FILE"
+                  cat /tmp/service_options.json >> "$LOG_FILE"
+                  exit 1
+                fi
+                if [ -z "$SUB_CHILD_OPTIONS" ]; then
+                  echo "Warning: No sub-child-options defined for $main_option:$sub_option, using sub_option only" | tee -a "$LOG_FILE"
+                  SUB_CHILD_OPTIONS=""
+                fi
+                echo "Sub-child-options for $main_option:$sub_option: $SUB_CHILD_OPTIONS" | tee -a "$LOG_FILE"
+                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --workflow_type=$WF_TYPE --devops=true --main_options=$main_option --sub_options=\"$sub_option\" --sub_child_options=\"$SUB_CHILD_OPTIONS\"'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run workflow for $main_option:$sub_option" | tee -a "$LOG_FILE"; exit 1; }
+              done
+            fi
+            echo "Workflow completed for $main_option" | tee -a "$LOG_FILE"
+          done
+          echo "Workflow completed successfully" | tee -a "$LOG_FILE"
 
       - name: Retrieve Exported Files
         if: always()
@@ -1065,29 +1090,29 @@ jobs:
           echo "Terraform configurations applied successfully" | tee -a "$LOG_FILE"
       
 
-      # - name: Cleanup Temporary Files
-      #   if: success()
-      #   run: |
-      #     LOG_FILE="/tmp/cd3_cleanup_$(date +%F_%H-%M-%S).log"
-      #     touch "$LOG_FILE" || { echo "Error: Failed to create cleanup log file" >&2; exit 1; }
-      #     echo "Starting cleanup at $(date)" | tee -a "$LOG_FILE"
-      #     # Remove SSH key
-      #     rm -f ~/.ssh/temp-id_rsa 2>>"$LOG_FILE" || echo "Warning: Failed to remove ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
-      #     # Remove workflow-specific files in /tmp
-      #     rm -f /tmp/service_options.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options.json" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/service_options_tmp.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options_tmp.json" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/oci_config 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/oci_config" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/oci_api_private.pem 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/oci_api_private.pem" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}_setUpOCI.properties 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/${PREFIX}_setUpOCI.properties" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/secret_temp_*.txt 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/secret_temp_*.txt" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/config.yaml 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/config.yaml" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/config_schema.yaml 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/config_schema.yaml" | tee -a "$LOG_FILE"
-      #     # Remove log files
-      #     rm -f /tmp/cd3_excel_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_excel_*.log" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/cd3_properties_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_properties_*.log" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/cd3_service_options_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_service_options_*.log" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/cd3_create_workflow_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_create_workflow_*.log" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/cd3_terraform_apply_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_terraform_apply_*.log" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/cd3_workflow_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_workflow_*.log" | tee -a "$LOG_FILE"
-      #     rm -f /tmp/validate_config_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/validate_config_*.log" | tee -a "$LOG_FILE"
-      #     echo "Cleanup completed successfully" | tee -a "$LOG_FILE"
+      - name: Cleanup Temporary Files
+        if: success()
+        run: |
+          LOG_FILE="/tmp/cd3_cleanup_$(date +%F_%H-%M-%S).log"
+          touch "$LOG_FILE" || { echo "Error: Failed to create cleanup log file" >&2; exit 1; }
+          echo "Starting cleanup at $(date)" | tee -a "$LOG_FILE"
+          # Remove SSH key
+          rm -f ~/.ssh/temp-id_rsa 2>>"$LOG_FILE" || echo "Warning: Failed to remove ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+          # Remove workflow-specific files in /tmp
+          rm -f /tmp/service_options.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options.json" | tee -a "$LOG_FILE"
+          rm -f /tmp/service_options_tmp.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options_tmp.json" | tee -a "$LOG_FILE"
+          rm -f /tmp/oci_config 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/oci_config" | tee -a "$LOG_FILE"
+          rm -f /tmp/oci_api_private.pem 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/oci_api_private.pem" | tee -a "$LOG_FILE"
+          rm -f /tmp/${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}_setUpOCI.properties 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/${PREFIX}_setUpOCI.properties" | tee -a "$LOG_FILE"
+          rm -f /tmp/secret_temp_*.txt 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/secret_temp_*.txt" | tee -a "$LOG_FILE"
+          rm -f /tmp/config.yaml 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/config.yaml" | tee -a "$LOG_FILE"
+          rm -f /tmp/config_schema.yaml 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/config_schema.yaml" | tee -a "$LOG_FILE"
+          # Remove log files
+          rm -f /tmp/cd3_excel_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_excel_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_properties_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_properties_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_service_options_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_service_options_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_create_workflow_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_create_workflow_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_terraform_apply_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_terraform_apply_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_workflow_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_workflow_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/validate_config_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/validate_config_*.log" | tee -a "$LOG_FILE"
+          echo "Cleanup completed successfully" | tee -a "$LOG_FILE"
