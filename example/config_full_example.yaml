@@ -1,0 +1,271 @@
+cd3_workflows:
+  create_resources:
+    enabled: false
+    validate_cd3: false
+    operations:
+      # Identity Operations
+      - main_option: Identity
+        sub_options:
+          - Add/Modify/Delete Compartments
+          - Add/Modify/Delete Groups
+          - Add/Modify/Delete Policies
+          - Add/Modify/Delete Users
+          - Add/Modify/Delete Network Sources
+      # Governance Operations
+      - main_option: Governance
+        sub_options:
+          - Tags
+          - Quotas
+      # Cost Management Operations
+      - main_option: Cost Management
+        sub_options:
+          - Budgets
+      # Network Operations
+      - main_option: Network
+        sub_options:
+          - Create Network
+          - Modify Network
+          - Security Rules
+          - Route Rules
+          - DRG Route Rules
+          - Network Security Groups
+          - Add/Modify/Delete VLANs
+          - Customer Connectivity
+        sub_child_options:
+          # For Security Rules
+          - main_sub_option: Security Rules
+            options:
+              - Export Security Rules (From OCI into SecRulesinOCI sheet)
+              - Add/Modify/Delete Security Rules (Reads SecRulesinOCI sheet)
+          # For Route Rules
+          - main_sub_option: Route Rules
+            options:
+              - Export Route Rules (From OCI into RouteRulesinOCI sheet)
+              - Add/Modify/Delete Route Rules (Reads RouteRulesinOCI sheet)
+          # For DRG Route Rules
+          - main_sub_option: DRG Route Rules
+            options:
+              - Export DRG Route Rules (From OCI into DRGRouteRulesinOCI sheet)
+              - Add/Modify/Delete DRG Route Rules (Reads DRGRouteRulesinOCI sheet)
+          # For Network Security Groups
+          - main_sub_option: Network Security Groups
+            options:
+              - Export NSGs (From OCI into NSGs sheet)
+              - Add/Modify/Delete NSGs (Reads NSGs sheet)
+          # For Customer Connectivity
+          - main_sub_option: Customer Connectivity
+            options:
+              - Create Remote Peering Connections
+      # OCI Firewall Operations
+      - main_option: OCI Firewall
+        sub_options:
+          - Validate Firewall CD3 Excel
+          - Add/Modify/Delete Firewall Policy
+          - Add/Modify/Delete Firewall
+          - Clone Firewall Policy
+        sub_child_options:
+          # For Add/Modify/Delete Firewall Policy
+          - main_sub_option: Add/Modify/Delete Firewall Policy
+            options:
+              - Execute All
+              - Add/Modify/Delete Policy
+              - Add/Modify/Delete Service
+              - Add/Modify/Delete Service-list
+              - Add/Modify/Delete Application
+              - Add/Modify/Delete Application-list
+              - Add/Modify/Delete Address-list
+              - Add/Modify/Delete Url-list
+              - Add/Modify/Delete Security rules
+              - Add/Modify/Delete Mapped Secrets
+              - Add/Modify/Delete Decryption Rules
+              - Add/Modify/Delete Decryption Profile
+              - Add/Modify/Delete Tunnel Inspection Rules
+      # DNS Management Operations
+      - main_option: DNS Management
+        sub_options:
+          - Add/Modify/Delete DNS Views/Zones/Records
+          - Add/Modify/Delete DNS Resolvers
+      # Compute Operations
+      - main_option: Compute
+        sub_options:
+          - Add/Modify/Delete Dedicated VM Hosts
+          - Add/Modify/Delete Instances/Boot Backup Policy
+      # Storage Operations
+      - main_option: Storage
+        sub_options:
+          - Add/Modify/Delete Block Volumes/Block Backup Policy
+          - Add/Modify/Delete File Systems
+          - Add/Modify/Delete Object Storage Buckets
+      # Database Operations
+      - main_option: Database
+        sub_options:
+          - Add/Modify/Delete Virtual Machine or Bare Metal DB Systems
+          - Add/Modify/Delete EXA Infra and EXA VM Clusters
+          - Add/Modify/Delete ADBs
+          - Add/Modify/Delete MySQL DBs
+      # Load Balancers Operations
+      - main_option: Load Balancers
+        sub_options:
+          - Add/Modify/Delete Load Balancers
+          - Add/Modify/Delete Network Load Balancers
+      # Management Services Operations
+      - main_option: Management Services
+        sub_options:
+          - Add/Modify/Delete Notifications
+          - Add/Modify/Delete Events
+          - Add/Modify/Delete Alarms
+          - Add/Modify/Delete ServiceConnectors
+      # Developer Services Operations
+      - main_option: Developer Services
+        sub_options:
+          - Upload current terraform files/state to Resource Manager  # Only included if tf_or_tofu is 'terraform'
+          - Add/Modify/Delete OKE Cluster and Nodepools
+      # Security Services Operations
+      - main_option: Security
+        sub_options:
+          - Add/Modify/Delete KMS (Keys/Vaults)
+          - Enable Cloud Guard
+      # Logging Services Operations
+      - main_option: Logging Services
+        sub_options:
+          - Enable VCN Flow Logs
+          - Enable LBaaS Logs
+          - Enable Object Storage Buckets Logs
+          - Enable File Storage Logs
+          - Enable Network Firewall Logs
+      # Software-Defined Data Centers - OCVS Operations
+      - main_option: Software-Defined Data Centers - OCVS
+        sub_options:
+          - Processing SDDC Tabs
+      # CD3 Services Operations
+      - main_option: CD3 Services
+        sub_options:
+          - Fetch Compartments OCIDs to variables file
+          - Fetch Protocols to OCI_Protocols
+      # Other OCI Tools Operations
+      - main_option: Other OCI Tools
+        sub_options:
+          - CIS Compliance Check Script
+          - ShowOCI Report
+          - OCI FSDR
+        sub_child_options:
+          # For CIS Compliance Check Script
+          - main_sub_option: CIS Compliance Check Script
+            options:
+              - Download latest compliance checking script
+              - Execute compliance checking script
+          # For ShowOCI Report
+          - main_sub_option: ShowOCI Report
+            options:
+              - Download Latest ShowOCI Script
+              - Execute ShowOCI Script
+          # For OCI FSDR
+          - main_sub_option: OCI FSDR
+            options:
+              - Export DR Plan
+              - Update DR Plan
+      # Validation Options for create_resources
+      - main_option: Validate CD3
+        sub_options:
+          - Validate Compartments
+          - Validate Groups
+          - Validate Policies
+          - Validate Tags
+          - Validate Budgets
+          - Validate Network(VCNs, SubnetsVLANs, DHCP, DRGs)
+          - Validate DNS
+          - Validate Instances
+          - Validate Block Volumes
+          - Validate FSS
+          - Validate Buckets
+          - Validate KMS
+  export_resources:
+    enabled: false
+    validate_cd3: false
+    operations:
+      # Export All OCI Resources
+      - main_option: Export All OCI Resources
+        sub_options: []
+      # Identity Operations
+      - main_option: Export Identity
+        sub_options:
+          - Export Compartments
+          - Export Groups
+          - Export Policies
+          - Export Users
+          - Export Network Sources
+      # Governance Operations
+      - main_option: Export Governance
+        sub_options:
+          - Export Tags
+          - Export Quotas
+      # Cost Management Operations
+      - main_option: Export Cost Management
+        sub_options:
+          - Export Budgets
+      # Network Operations
+      - main_option: Export Network
+        sub_options:
+          - Export all Network Components
+          - Export Network components for VCNs/DRGs/DRGRouteRulesinOCI Tabs
+          - Export Network components for DHCP Tab
+          - Export Network components for SecRulesinOCI Tab
+          - Export Network components for RouteRulesinOCI Tab
+          - Export Network components for SubnetsVLANs Tab
+          - Export Network components for NSGs Tab
+      # OCI Firewall Operations
+      - main_option: Export OCI Firewall
+        sub_options:
+          - Export Firewall Policy
+          - Export Firewall
+      # DNS Management Operations
+      - main_option: Export DNS Management
+        sub_options:
+          - Export DNS Views/Zones/Records
+          - Export DNS Resolvers
+      # Compute Operations
+      - main_option: Export Compute
+        sub_options:
+          - Export Dedicated VM Hosts
+          - Export Instances (excludes instances launched by OKE)
+      # Storage Operations
+      - main_option: Export Storage
+        sub_options:
+          - Export Block Volumes/Block Backup Policy
+          - Export File Systems
+          - Export Object Storage Buckets
+      # Databases Operations
+      - main_option: Export Databases
+        sub_options:
+          - Export Virtual Machine or Bare Metal DB Systems
+          - Export EXA Infra and EXA VMClusters
+          - Export ADBs
+          - Export MySQL DBs
+      # Load Balancers Operations
+      - main_option: Export Load Balancers
+        sub_options:
+          - Export Load Balancers
+          - Export Network Load Balancers
+      # Management Services Operations
+      - main_option: Export Management Services
+        sub_options:
+          - Export Notifications
+          - Export Events
+          - Export Alarms
+          - Export Service Connectors
+      # Developer Services Operations
+      - main_option: Export Developer Services
+        sub_options:
+          - Export OKE cluster and Nodepools
+      # Security Operations
+      - main_option: Export Security
+        sub_options:
+          - Export KMS (Keys/Vaults)
+      # Software-Defined Data Centers - OCVS Operations
+      - main_option: Export Software-Defined Data Centers - OCVS
+        sub_options: []
+      # CD3 Services Operations
+      - main_option: CD3 Services
+        sub_options:
+          - Fetch Compartments OCIDs to variables file
+          - Fetch Protocols to OCI_Protocols
