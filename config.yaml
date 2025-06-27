@@ -5,7 +5,6 @@ cd3_workflows:
     operations:
       - main_option: Identity
         sub_option: Add/Modify/Delete Compartments
-        sub_child_option: ''
   export_resources:
     enabled: false
     validate_cd3: false
