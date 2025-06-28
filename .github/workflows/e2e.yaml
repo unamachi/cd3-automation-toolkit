@@ -46,6 +46,30 @@ jobs:
           if ! command -v git &> /dev/null; then
             sudo yum install -y git
           fi
+      
+      - name: Install yq
+        run: |
+          LOG_FILE="/tmp/yq_install_$(date +%F_%H-%M-%S).log"
+          echo "Starting yq installation at $(date)" | tee -a "$LOG_FILE"
+          YQ_VERSION="v4.44.3"
+          YQ_BINARY="yq_linux_amd64"
+          if command -v yq >/dev/null 2>&1; then
+            echo "yq already installed, checking version" | tee -a "$LOG_FILE"
+            INSTALLED_VERSION=$(yq --version | grep -oP '\d+\.\d+\.\d+')
+            if [ "$INSTALLED_VERSION" = "${YQ_VERSION#v}" ]; then
+              echo "yq version $INSTALLED_VERSION is correct" | tee -a "$LOG_FILE"
+              exit 0
+            else
+              echo "yq version $INSTALLED_VERSION found, updating to $YQ_VERSION" | tee -a "$LOG_FILE"
+            fi
+          fi
+          wget -q https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}.tar.gz -O /tmp/${YQ_BINARY}.tar.gz 2>>"$LOG_FILE" || { echo "Error: Failed to download yq" | tee -a "$LOG_FILE"; exit 1; }
+          tar -xzf /tmp/${YQ_BINARY}.tar.gz -C /tmp 2>>"$LOG_FILE" || { echo "Error: Failed to extract yq" | tee -a "$LOG_FILE"; exit 1; }
+          sudo mv /tmp/${YQ_BINARY} /usr/local/bin/yq 2>>"$LOG_FILE" || { echo "Error: Failed to move yq to /usr/local/bin" | tee -a "$LOG_FILE"; exit 1; }
+          sudo chmod +x /usr/local/bin/yq 2>>"$LOG_FILE" || { echo "Error: Failed to make yq executable" | tee -a "$LOG_FILE"; exit 1; }
+          rm -f /tmp/${YQ_BINARY}.tar.gz 2>>"$LOG_FILE" || echo "Warning: Failed to remove yq tarball" | tee -a "$LOG_FILE"
+          yq --version >> "$LOG_FILE" 2>&1 || { echo "Error: yq installation failed" | tee -a "$LOG_FILE"; exit 1; }
+          echo "yq installed successfully" | tee -a "$LOG_FILE"
 
       - name: Validate Single Workflow
         id: validate_workflow
