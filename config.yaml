@@ -12,3 +12,10 @@ cd3_workflows:
       - main_option: Export Compute
         sub_options:
           - Export Instances (excludes instances launched by OKE)
+  create_resources:
+    enabled: false
+    validate_cd3: false
+    operations:
+      - main_option: Identity
+        sub_options:
+          - Add/Modify/Delete Compartments
