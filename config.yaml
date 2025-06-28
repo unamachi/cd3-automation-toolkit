@@ -3,7 +3,7 @@ cd3_workflows:
     enabled: true
     validate_cd3: false
     filters:
-      regions: ["us-phoenix-1"]
+      regions: ["phoenix"]
       compartment_ids: ["Ulag"]
     operations:
       - main_option: CD3 Services
