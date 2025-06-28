@@ -1013,7 +1013,7 @@ jobs:
                   exit 1
                 fi
                 echo "Sub-child-options for $main_option:$sub_option: $SUB_CHILD_OPTIONS" | tee -a "$LOG_FILE"
-                CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=true --main_options=$main_option --sub_options=\"$sub_option\""
+                CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=true --main_options=\"$main_option\" --sub_options=\"$sub_option\""
                 if [ -n "$SUB_CHILD_OPTIONS" ]; then
                   CMD="$CMD --sub_child_options=\"$SUB_CHILD_OPTIONS\""
                 fi
