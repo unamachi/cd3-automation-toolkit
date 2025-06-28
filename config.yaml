@@ -6,9 +6,6 @@ cd3_workflows:
       regions: ["phoenix"]
       compartment_ids: ["Ulag"]
     operations:
-      - main_option: CD3 Services
-        sub_options:
-          - Fetch Compartments OCIDs to variables file
       - main_option: Export Compute
         sub_options:
           - Export Instances (excludes instances launched by OKE)
