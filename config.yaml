@@ -1,12 +1,14 @@
 cd3_workflows:
-  create_resources:
+  export_resources:
     enabled: true
     validate_cd3: false
+    filters:
+      regions: ["us-phoenix-1"]
+      compartment_ids: ["Ulag"]
     operations:
-      - main_option: Identity
-        sub_options: 
-          - Add/Modify/Delete Compartments
-  export_resources:
-    enabled: false
-    validate_cd3: false
-    operations: []
+      - main_option: CD3 Services
+        sub_options:
+          - Fetch Compartments OCIDs to variables file
+      - main_option: Export Compute
+        sub_options:
+          - Export Instances (excludes instances launched by OKE)
