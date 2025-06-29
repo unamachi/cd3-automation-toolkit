@@ -1097,7 +1097,6 @@ jobs:
             REGION="${{ github.event.inputs.region || 'us-phoenix-1' }}"
             OUTDIR_STRUCTURE_FILE="/cd3user/tenancies/$PREFIX/${PREFIX}_outdir_structure_file.properties"
             OCI_REGIONS_FILE="/cd3user/oci_tools/cd3_automation_toolkit/OCI_Regions"
-            UPDATED_PATHS_FILE="/cd3user/tenancies/$PREFIX/updated_paths.safe"
         
             # Get workflow type
             WF_TYPE=$(grep "workflow_type" /tmp/${PREFIX}_setUpOCI.properties | cut -d= -f2 | tr -d '[:space:]')
@@ -1136,11 +1135,6 @@ jobs:
               echo "Outdir structure enabled: false" | tee -a "$LOG_FILE"
             fi
         
-            # Validate updated_paths.safe
-            if [ ! -f "$UPDATED_PATHS_FILE" ]; then
-              echo "Error: updated_paths.safe not found at $UPDATED_PATHS_FILE" | tee -a "$LOG_FILE"
-              exit 1
-            fi
         
             # Create directory for Terraform plans
             mkdir -p /tmp/terraform_plans || { echo "Error: Failed to create /tmp/terraform_plans" | tee -a "$LOG_FILE"; exit 1; }
@@ -1188,11 +1182,6 @@ jobs:
                 TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION"
               fi
         
-              # Check if TF_DIR exists in updated_paths.safe
-              if ! grep -Fx "$TF_DIR" "$UPDATED_PATHS_FILE" 2>>"$LOG_FILE"; then
-                echo "Warning: Directory $TF_DIR not found in $UPDATED_PATHS_FILE, skipping $main_option" | tee -a "$LOG_FILE"
-                continue
-              fi
         
               # Check if TF_DIR exists
               if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
