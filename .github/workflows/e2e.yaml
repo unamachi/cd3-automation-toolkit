@@ -1085,9 +1085,9 @@ jobs:
           ls -l "$LOCAL_DIR" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list exported files" | tee -a "$LOG_FILE"; exit 1; }
           echo "Retrieve Exported Files completed successfully" | tee -a "$LOG_FILE"
 
-          - name: Apply Terraform Configurations for Services
-          if: always()
-          run: |
+      - name: Apply Terraform Configurations for Services
+        if: always()
+        run: |
             # Set environment variables
             LOG_FILE="/tmp/cd3_terraform_apply_$(date +%F_%H-%M-%S).log"
             touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
