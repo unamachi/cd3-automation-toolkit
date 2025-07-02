@@ -338,8 +338,6 @@ jobs:
   CD3_Bootstrap:
     runs-on: self-hosted
     needs: Deploy_RM_Stack
-    # Skip job entirely if use_existing_instance=true and Deploy_RM_Stack was skipped
-    if: github.event.inputs.use_existing_instance != 'true' || job.status != 'skipped'
     env:
       OCI_REGION: us-phoenix-1
       INSTANCE_NAME: workvm-${{ github.run_id }}
