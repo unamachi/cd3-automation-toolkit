@@ -338,7 +338,6 @@ jobs:
   CD3_Bootstrap:
     runs-on: self-hosted
     #needs: Deploy_RM_Stack
-    needs: ${{ github.event.inputs.use_existing_instance != 'true' && 'Deploy_RM_Stack' || '' }}
     env:
       OCI_REGION: us-phoenix-1
       INSTANCE_NAME: workvm-${{ github.run_id }}
