@@ -658,6 +658,7 @@ jobs:
             oci_devops_git_repo_name=
             oci_devops_git_user=
             oci_devops_git_key=
+            ssh_public_key=
             EOF
             chmod 600 /tmp/tenancyconfig.properties 2>/dev/null
             echo "Checking container status..." | tee -a "$LOG_FILE"
