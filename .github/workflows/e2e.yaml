@@ -1384,8 +1384,7 @@ jobs:
               fi
             done
             echo "Terraform configurations processed successfully" | tee -a "$LOG_FILE"
-
-
+            
   CD3_Bootstrap_Existing_Instance:
       if: ${{ github.event.inputs.use_existing_instance == 'true' }}
       runs-on: self-hosted
