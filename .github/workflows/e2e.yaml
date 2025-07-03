@@ -1382,6 +1382,7 @@ jobs:
         INSTANCE_NAME: workvm-${{ github.run_id }}
         INSTANCE_IP: ${{ github.event.inputs.instance_ip  }}
         INSTANCE_OCID: ${{ github.event.inputs.instance_ocid }}
+        EXISTING_SSH_PRIVATE_KEY_OCID: ${{ secrets.EXISTING_SSH_PRIVATE_KEY_OCID }}
       steps:
         - name: Checkout code
           uses: actions/checkout@v4
@@ -1442,29 +1443,6 @@ jobs:
           with:
             name: ssh-private-key
             path: .
-        - name: Configure SSH Key
-          env:
-            EXISTING_SSH_PRIVATE_KEY_OCID: ${{ secrets.EXISTING_SSH_PRIVATE_KEY_OCID }}
-          run: |
-              LOG_FILE="/tmp/ssh_key_setup_$(date +%F_%H-%M-%S).log"
-              mkdir -p ~/.ssh
-              if [ "${{ github.event.inputs.use_existing_instance }}" = "true" ]; then
-                if [ -z "$EXISTING_SSH_PRIVATE_KEY_OCID" ]; then
-                  echo "Error: EXISTING_SSH_PRIVATE_KEY_OCID secret required when use_existing_instance=true" | tee -a "$LOG_FILE"
-                  exit 1
-                fi
-                SSH_PRIVATE_KEY=$(oci secrets secret-bundle get --secret-id "$EXISTING_SSH_PRIVATE_KEY_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
-                if [ -z "$SSH_PRIVATE_KEY" ]; then
-                  echo "Error: Failed to retrieve SSH private key from OCI Vault" | tee -a "$LOG_FILE"
-                  exit 1
-                fi
-                echo "$SSH_PRIVATE_KEY" > ~/.ssh/temp-id_rsa 2>>"$LOG_FILE"
-                echo "::add-mask::$SSH_PRIVATE_KEY"
-              else
-                base64 -d temp-ssh-key.txt > ~/.ssh/temp-id_rsa 2>>"$LOG_FILE"
-              fi
-              chmod 600 ~/.ssh/temp-id_rsa 2>>"$LOG_FILE" || { echo "Error: Failed to set SSH key permissions" | tee -a "$LOG_FILE"; exit 1; }
-              echo "SSH key configured" | tee -a "$LOG_FILE"
 
         - name: Wait for Instance to be Ready
           if: ${{ github.event.inputs.use_existing_instance != 'true' }}
@@ -1490,45 +1468,59 @@ jobs:
             done
         #Changes      
         - name: Validate Inputs and Instance
-          env:
-            EXISTING_SSH_PRIVATE_KEY_OCID: ${{ secrets.EXISTING_SSH_PRIVATE_KEY_OCID }}
+          if: ${{ github.event.inputs.use_existing_instance == 'true' }}
           run: |
             LOG_FILE="/tmp/cd3_validate_inputs_$(date +%F_%H-%M-%S).log"
-            if [ "${{ github.event.inputs.use_existing_instance }}" = "true" ]; then
-              if [ -z "${{ env.INSTANCE_IP }}" ]; then
-                echo "Error: instance_ip required when use_existing_instance=true" | tee -a "$LOG_FILE"
-                exit 1
-              fi
-              if [ -z "$EXISTING_SSH_PRIVATE_KEY_OCID" ]; then
-                echo "Error: EXISTING_SSH_PRIVATE_KEY_OCID secret required when use_existing_instance=true" | tee -a "$LOG_FILE"
-                exit 1
-              fi
-              # Validate instance_ocid if provided
-              if [ -n "${{ env.INSTANCE_OCID }}" ]; then
-                STATUS=$(oci compute instance get --instance-id "${{ env.INSTANCE_OCID }}" --auth instance_principal --region "${{ env.OCI_REGION }}" --query "data.\"lifecycle-state\"" --raw-output 2>>"$LOG_FILE")
-                if [ "$STATUS" != "RUNNING" ]; then
-                  echo "Error: Instance ${{ env.INSTANCE_OCID }} is not running (status: $STATUS)" | tee -a "$LOG_FILE"
-                  exit 1
-                fi
-              fi
-              # Check container
-              CONTAINER_NAME="cd3_toolkit"
-              ssh-keyscan -H ${{ env.INSTANCE_IP }} >> ~/.ssh/known_hosts 2>>"$LOG_FILE" || true
-              for attempt in {1..3}; do
-                CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman ps -q -f name=$CONTAINER_NAME" 2>>"$LOG_FILE")
-                if [ -n "$CONTAINER_ID" ]; then
-                  echo "Container $CONTAINER_NAME running on ${{ env.INSTANCE_IP }}" | tee -a "$LOG_FILE"
-                  break
-                fi
-                echo "Container check attempt $attempt/3 failed, retrying in 30 seconds..." | tee -a "$LOG_FILE"
-                sleep 30
-                if [ $attempt -eq 3 ]; then
-                  echo "Error: Container $CONTAINER_NAME not running on ${{ env.INSTANCE_IP }}" | tee -a "$LOG_FILE"
-                  exit 1
-                fi
-              done
+            echo "Starting validation..." | tee -a "$LOG_FILE"
+
+            if [ -z "$INSTANCE_IP" ]; then
+              echo "❌ Error: instance_ip is required when use_existing_instance=true" | tee -a "$LOG_FILE"
+              exit 1
             fi
-            echo "Input and instance validation completed" | tee -a "$LOG_FILE"
+
+            if [ -z "$EXISTING_SSH_PRIVATE_KEY_OCID" ]; then
+              echo "❌ Error: EXISTING_SSH_PRIVATE_KEY_OCID is missing (secret not set)" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+
+            if [ -n "$INSTANCE_OCID" ]; then
+              echo "Validating OCI instance state for $INSTANCE_OCID..." | tee -a "$LOG_FILE"
+              STATUS=$(oci compute instance get \
+                --instance-id "$INSTANCE_OCID" \
+                --auth instance_principal \
+                --region "$OCI_REGION" \
+                --query "data.\"lifecycle-state\"" \
+                --raw-output 2>>"$LOG_FILE")
+              if [ "$STATUS" != "RUNNING" ]; then
+                echo "❌ Error: Instance $INSTANCE_OCID is not running (status: $STATUS)" | tee -a "$LOG_FILE"
+                exit 1
+              fi
+            fi
+
+            # Validate container on existing instance
+            CONTAINER_NAME="cd3_toolkit"
+            ssh-keyscan -H "$INSTANCE_IP" >> ~/.ssh/known_hosts 2>>"$LOG_FILE" || true
+
+            for attempt in {1..3}; do
+              echo "Checking for container $CONTAINER_NAME on $INSTANCE_IP (attempt $attempt)..." | tee -a "$LOG_FILE"
+              CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" \
+                "sudo podman ps -q -f name=$CONTAINER_NAME" 2>>"$LOG_FILE")
+
+              if [ -n "$CONTAINER_ID" ]; then
+                echo "✅ Container $CONTAINER_NAME is running (ID: $CONTAINER_ID)" | tee -a "$LOG_FILE"
+                break
+              fi
+
+              if [ "$attempt" -eq 3 ]; then
+                echo "❌ Error: Container $CONTAINER_NAME not running on $INSTANCE_IP after 3 attempts" | tee -a "$LOG_FILE"
+                exit 1
+              fi
+
+              echo "Retrying in 30s..." | tee -a "$LOG_FILE"
+              sleep 30
+            done
+            echo "✅ Input and instance validation completed" | tee -a "$LOG_FILE"
+
 
         - name: Validate Workflow in CD3_Bootstrap
           id: validate_workflow
@@ -1553,9 +1545,9 @@ jobs:
         - name: Test SSH Connection
           run: |
             LOG_FILE="/tmp/ssh_test_$(date +%F_%H-%M-%S).log"
-            ssh-keyscan -H ${{ env.INSTANCE_IP }} >> ~/.ssh/known_hosts 2>>"$LOG_FILE" || true
+            ssh-keyscan -H $INSTANCE_IP >> ~/.ssh/known_hosts 2>>"$LOG_FILE" || true
             for attempt in {1..3}; do
-              if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 opc@${{ env.INSTANCE_IP }} exit 2>>"$LOG_FILE"; then
+              if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 opc@"$INSTANCE_IP" exit 2>>"$LOG_FILE"; then
                 echo "SSH connection okay" | tee -a "$LOG_FILE"
                 break
               fi
@@ -1677,47 +1669,47 @@ jobs:
               chmod 600 /tmp/tenancyconfig.properties 2>/dev/null
               echo "Checking container status..." | tee -a "$LOG_FILE"
               for attempt in {1..6}; do
-                CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman ps -q -f name=$CONTAINER_NAME" 2>>"$LOG_FILE")
+                CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman ps -q -f name=$CONTAINER_NAME" 2>>"$LOG_FILE")
                 if [ -n "$CONTAINER_ID" ]; then
                   echo "Found running container '$CONTAINER_NAME' with ID: [masked]" | tee -a "$LOG_FILE"
                   break
                 fi
                 echo "Container check attempt $attempt/6 failed, checking stopped containers..." | tee -a "$LOG_FILE"
-                STOPPED_CONTAINER=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman ps -a -q -f name=$CONTAINER_NAME" 2>>"$LOG_FILE")
+                STOPPED_CONTAINER=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman ps -a -q -f name=$CONTAINER_NAME" 2>>"$LOG_FILE")
                 if [ -n "$STOPPED_CONTAINER" ]; then
                   echo "Starting stopped container '$CONTAINER_NAME'..." | tee -a "$LOG_FILE"
-                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman start $CONTAINER_NAME" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to start container" | tee -a "$LOG_FILE"; exit 1; }
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman start $CONTAINER_NAME" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to start container" | tee -a "$LOG_FILE"; exit 1; }
                   sleep 10
-                  CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman ps -q -f name=$CONTAINER_NAME" 2>>"$LOG_FILE")
+                  CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman ps -q -f name=$CONTAINER_NAME" 2>>"$LOG_FILE")
                   if [ -n "$CONTAINER_ID" ]; then
                     echo "Container '$CONTAINER_NAME' started successfully with ID: [masked]" | tee -a "$LOG_FILE"
                     break
                   fi
                 fi
                 echo "No container found, retrying in 60 seconds..." | tee -a "$LOG_FILE"
-                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman ps -a" >> "$LOG_FILE" 2>&1
+                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman ps -a" >> "$LOG_FILE" 2>&1
                 sleep 60
                 if [ $attempt -eq 6 ]; then
-                  echo "Error: Container '$CONTAINER_NAME' not found or not running on ${{ env.INSTANCE_IP }} after 6 attempts" | tee -a "$LOG_FILE"
+                  echo "Error: Container '$CONTAINER_NAME' not found or not running on $INSTANCE_IP after 6 attempts" | tee -a "$LOG_FILE"
                   cat "$LOG_FILE"
                   exit 1
                 fi
               done
-              scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_api_private.pem opc@${{ env.INSTANCE_IP }}:/tmp/oci_api_private.pem 2>>"$LOG_FILE" || { echo "Error: Failed to SCP private key" | tee -a "$LOG_FILE"; exit 1; }
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID mkdir -p /cd3user/tenancies/keys" 2>>"$LOG_FILE" || { echo "Error: Failed to create directory in container" | tee -a "$LOG_FILE"; exit 1; }
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/oci_api_private.pem $CONTAINER_ID:$KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy private key to container" | tee -a "$LOG_FILE"; ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID ls -ld /cd3user/tenancies/keys" >> "$LOG_FILE"; exit 1; }
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID chmod 600 $KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on private key" | tee -a "$LOG_FILE"; exit 1; }
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/oci_api_private.pem" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary private key" | tee -a "$LOG_FILE"; exit 1; }
+              scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_api_private.pem opc@"$INSTANCE_IP":/tmp/oci_api_private.pem 2>>"$LOG_FILE" || { echo "Error: Failed to SCP private key" | tee -a "$LOG_FILE"; exit 1; }
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_ID mkdir -p /cd3user/tenancies/keys" 2>>"$LOG_FILE" || { echo "Error: Failed to create directory in container" | tee -a "$LOG_FILE"; exit 1; }
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/oci_api_private.pem $CONTAINER_ID:$KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy private key to container" | tee -a "$LOG_FILE"; ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID ls -ld /cd3user/tenancies/keys" >> "$LOG_FILE"; exit 1; }
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_ID chmod 600 $KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on private key" | tee -a "$LOG_FILE"; exit 1; }
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "rm /tmp/oci_api_private.pem" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary private key" | tee -a "$LOG_FILE"; exit 1; }
               echo "API private key copied to container" | tee -a "$LOG_FILE"
               scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/tenancyconfig.properties opc@${{ env.INSTANCE_IP }}:/tmp/tenancyconfig.properties 2>>"$LOG_FILE" || { echo "Error: Failed to SCP tenancy config" | tee -a "$LOG_FILE"; exit 1; }
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/tenancyconfig.properties $CONTAINER_ID:$CONFIG_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to copy tenancy config to container" | tee -a "$LOG_FILE"; exit 1; }
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/tenancyconfig.properties" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary tenancy config" | tee -a "$LOG_FILE"; exit 1; }
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/tenancyconfig.properties $CONTAINER_ID:$CONFIG_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to copy tenancy config to container" | tee -a "$LOG_FILE"; exit 1; }
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "rm /tmp/tenancyconfig.properties" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary tenancy config" | tee -a "$LOG_FILE"; exit 1; }
               echo "tenancyconfig.properties copied to container" | tee -a "$LOG_FILE"
               echo "Checking Python in container..." | tee -a "$LOG_FILE"
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID bash -c 'command -v python3 >/dev/null || { echo \"Error: python3 not found in container\" >> $LOG_FILE; exit 1; }'" 2>>"$LOG_FILE" || { echo "Error: Python3 check failed in container" | tee -a "$LOG_FILE"; exit 1; }
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_ID bash -c 'command -v python3 >/dev/null || { echo \"Error: python3 not found in container\" >> $LOG_FILE; exit 1; }'" 2>>"$LOG_FILE" || { echo "Error: Python3 check failed in container" | tee -a "$LOG_FILE"; exit 1; }
               echo "Running createTenancyConfig.py..." | tee -a "$LOG_FILE"
               for i in {1..8}; do
-                if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID bash -c 'sudo ln -sf /usr/bin/python3 /usr/bin/python && cd /cd3user/oci_tools/cd3_automation_toolkit/user-scripts/ && python createTenancyConfig.py tenancyconfig.properties'" >> "$LOG_FILE" 2>&1; then
+                if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_ID bash -c 'sudo ln -sf /usr/bin/python3 /usr/bin/python && cd /cd3user/oci_tools/cd3_automation_toolkit/user-scripts/ && python createTenancyConfig.py tenancyconfig.properties'" >> "$LOG_FILE" 2>&1; then
                   echo "Environment initialization completed successfully" | tee -a "$LOG_FILE"
                   break
                 else
@@ -1730,11 +1722,11 @@ jobs:
                   exit 1
                 fi
               done
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID ls -l /cd3user/tenancies/$PREFIX/" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list output directory" | tee -a "$LOG_FILE"; exit 1; }
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@$"$INSTANCE_IP" "sudo podman exec $CONTAINER_ID ls -l /cd3user/tenancies/$PREFIX/" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list output directory" | tee -a "$LOG_FILE"; exit 1; }
               echo "Starting Jenkins in container..." | tee -a "$LOG_FILE"
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID bash -c 'nohup /usr/share/jenkins/jenkins.sh > /cd3user/jenkins.log 2>&1 & sleep 20; ps aux | grep -q \"[j]enkins\" || { echo \"Jenkins failed to start\"; exit 1; }'" 2>>"$LOG_FILE" || { echo "Error: Failed to start Jenkins" | tee -a "$LOG_FILE"; exit 1; }
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@$"$INSTANCE_IP" "sudo podman exec $CONTAINER_ID bash -c 'nohup /usr/share/jenkins/jenkins.sh > /cd3user/jenkins.log 2>&1 & sleep 20; ps aux | grep -q \"[j]enkins\" || { echo \"Jenkins failed to start\"; exit 1; }'" 2>>"$LOG_FILE" || { echo "Error: Failed to start Jenkins" | tee -a "$LOG_FILE"; exit 1; }
               echo "Jenkins started in container" | tee -a "$LOG_FILE"
-              PUBLIC_IP="${{ github.event.inputs.use_existing_instance == 'true' && github.event.inputs.public_ip || needs.Deploy_RM_Stack.outputs.public_ip }}"
+              PUBLIC_IP="${{ github.event.inputs.use_existing_instance == 'true' && github.event.inputs.public_ip }}"
               if [ -n "$PUBLIC_IP" ] && [ "$PUBLIC_IP" != "null" ]; then
                 echo "Access Jenkins at https://$PUBLIC_IP:8443" | tee -a "$LOG_FILE"
               else
@@ -1761,12 +1753,12 @@ jobs:
                 exit 1
               fi
             done
-            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no "$EXCEL_PATH" opc@${{ env.INSTANCE_IP }}:/tmp/CD3-Blank-template.xlsx 2>>"$LOG_FILE" || { echo "Error: Failed to SCP Excel file" | tee -a "$LOG_FILE"; exit 1; }
-            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no "$CONFIG_PATH" opc@${{ env.INSTANCE_IP }}:/tmp/config.yaml 2>>"$LOG_FILE" || { echo "Error: Failed to SCP config file" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME mkdir -p /cd3user/tenancies/$PREFIX/cd3_files" 2>>"$LOG_FILE" || { echo "Error: Failed to create Excel directory in container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/CD3-Blank-template.xlsx $CONTAINER_NAME:$EXCEL_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy Excel file to container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/config.yaml $CONTAINER_NAME:$CONFIG_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy config file to container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/CD3-Blank-template.xlsx /tmp/config.yaml" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary files" | tee -a "$LOG_FILE"; exit 1; }
+            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no "$EXCEL_PATH" opc@"$INSTANCE_IP":/tmp/CD3-Blank-template.xlsx 2>>"$LOG_FILE" || { echo "Error: Failed to SCP Excel file" | tee -a "$LOG_FILE"; exit 1; }
+            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no "$CONFIG_PATH" opc@"$INSTANCE_IP":/tmp/config.yaml 2>>"$LOG_FILE" || { echo "Error: Failed to SCP config file" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME mkdir -p /cd3user/tenancies/$PREFIX/cd3_files" 2>>"$LOG_FILE" || { echo "Error: Failed to create Excel directory in container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/CD3-Blank-template.xlsx $CONTAINER_NAME:$EXCEL_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy Excel file to container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/config.yaml $CONTAINER_NAME:$CONFIG_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy config file to container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "rm /tmp/CD3-Blank-template.xlsx /tmp/config.yaml" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary files" | tee -a "$LOG_FILE"; exit 1; }
             echo "Excel and config.yaml copied to container at $EXCEL_DEST_PATH and $CONFIG_DEST_PATH" | tee -a "$LOG_FILE"
 
         - name: Create setUpOCI Properties File
@@ -1867,26 +1859,26 @@ jobs:
             EOF
             chmod 600 /tmp/${PREFIX}_setUpOCI.properties 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on properties file" | tee -a "$LOG_FILE"; exit 1; }
             # Copy files to instance and container
-            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_api_private.pem opc@${{ env.INSTANCE_IP }}:/tmp/oci_api_private.pem 2>>"$LOG_FILE" || { echo "Error: Failed to SCP private key file" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME mkdir -p /cd3user/tenancies/keys" 2>>"$LOG_FILE" || { echo "Error: Failed to create keys directory in container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/oci_api_private.pem $CONTAINER_NAME:$KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy private key to container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME chmod 600 $KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on private key" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/oci_api_private.pem" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary private key file" | tee -a "$LOG_FILE"
-            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_config opc@${{ env.INSTANCE_IP }}:/tmp/oci_config 2>>"$LOG_FILE" || { echo "Error: Failed to SCP OCI config file" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/oci_config $CONTAINER_NAME:$OCI_CONFIG_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy OCI config to container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/oci_config" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary OCI config file" | tee -a "$LOG_FILE"
-            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/${PREFIX}_setUpOCI.properties opc@${{ env.INSTANCE_IP }}:/tmp/${PREFIX}_setUpOCI.properties 2>>"$LOG_FILE" || { echo "Error: Failed to SCP properties file" | tee -a "$LOG_FILE"; exit 1; }
+            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_api_private.pem opc@"$INSTANCE_IP":/tmp/oci_api_private.pem 2>>"$LOG_FILE" || { echo "Error: Failed to SCP private key file" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME mkdir -p /cd3user/tenancies/keys" 2>>"$LOG_FILE" || { echo "Error: Failed to create keys directory in container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/oci_api_private.pem $CONTAINER_NAME:$KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy private key to container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME chmod 600 $KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on private key" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "rm -f /tmp/oci_api_private.pem" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary private key file" | tee -a "$LOG_FILE"
+            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_config opc@"$INSTANCE_IP":/tmp/oci_config 2>>"$LOG_FILE" || { echo "Error: Failed to SCP OCI config file" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/oci_config $CONTAINER_NAME:$OCI_CONFIG_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy OCI config to container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "rm -f /tmp/oci_config" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary OCI config file" | tee -a "$LOG_FILE"
+            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/${PREFIX}_setUpOCI.properties opc@"$INSTANCE_IP":/tmp/${PREFIX}_setUpOCI.properties 2>>"$LOG_FILE" || { echo "Error: Failed to SCP properties file" | tee -a "$LOG_FILE"; exit 1; }
             # Create and verify config directory in container
             echo "Creating config directory in container" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME mkdir -p /cd3user/tenancies/$PREFIX/config" 2>>"$LOG_FILE" || { echo "Error: Failed to create config directory in container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME mkdir -p /cd3user/tenancies/$PREFIX/config" 2>>"$LOG_FILE" || { echo "Error: Failed to create config directory in container" | tee -a "$LOG_FILE"; exit 1; }
             echo "Verifying config directory in container" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME ls -ld /cd3user/tenancies/$PREFIX/config" 2>>"$LOG_FILE" || { echo "Error: Config directory not created in container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME ls -ld /cd3user/tenancies/$PREFIX/config" 2>>"$LOG_FILE" || { echo "Error: Config directory not created in container" | tee -a "$LOG_FILE"; exit 1; }
             # Copy and verify properties file
             echo "Copying properties file to container" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/${PREFIX}_setUpOCI.properties $CONTAINER_NAME:$PROPERTIES_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy properties file to container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/${PREFIX}_setUpOCI.properties $CONTAINER_NAME:$PROPERTIES_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy properties file to container" | tee -a "$LOG_FILE"; exit 1; }
             echo "Verifying properties file in container" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME ls -l $PROPERTIES_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Properties file not found in container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/${PREFIX}_setUpOCI.properties" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary properties file" | tee -a "$LOG_FILE"
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME ls -l $PROPERTIES_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Properties file not found in container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "rm -f /tmp/${PREFIX}_setUpOCI.properties" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary properties file" | tee -a "$LOG_FILE"
             echo "Properties file copied to $PROPERTIES_DEST_PATH" | tee -a "$LOG_FILE"
             echo "OCI config file copied to $OCI_CONFIG_DEST_PATH" | tee -a "$LOG_FILE"
             echo "setUpOCI properties file created successfully" | tee -a "$LOG_FILE"
@@ -1915,15 +1907,15 @@ jobs:
             fi
             # Check Python and pip in container
             echo "Checking Python and pip in container" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 --version" >>"$LOG_FILE" 2>&1 || { echo "Error: Python3 not found in container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME pip3 --version" >>"$LOG_FILE" 2>&1 || { echo "Error: pip3 not found in container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME python3 --version" >>"$LOG_FILE" 2>&1 || { echo "Error: Python3 not found in container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME pip3 --version" >>"$LOG_FILE" 2>&1 || { echo "Error: pip3 not found in container" | tee -a "$LOG_FILE"; exit 1; }
             # Install PyYAML and schema in container
             echo "Installing PyYAML and schema in container" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME pip3 install PyYAML schema --no-cache-dir" >>"$LOG_FILE" 2>&1 || { echo "Error: Failed to install Python dependencies in container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME pip3 install PyYAML schema --no-cache-dir" >>"$LOG_FILE" 2>&1 || { echo "Error: Failed to install Python dependencies in container" | tee -a "$LOG_FILE"; exit 1; }
             # Verify installation
             echo "Verifying Python dependencies in container" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME pip3 show PyYAML" >>"$LOG_FILE" 2>&1 || { echo "Error: PyYAML not installed in container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME pip3 show schema" >>"$LOG_FILE" 2>&1 || { echo "Error: schema not installed in container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME pip3 show PyYAML" >>"$LOG_FILE" 2>&1 || { echo "Error: PyYAML not installed in container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME pip3 show schema" >>"$LOG_FILE" 2>&1 || { echo "Error: schema not installed in container" | tee -a "$LOG_FILE"; exit 1; }
             # Create config_schema.yaml
             echo "Creating config_schema.yaml" | tee -a "$LOG_FILE"
             cat << EOF > config_schema.yaml
@@ -2033,24 +2025,24 @@ jobs:
             echo "Copying config.yaml, config_schema.yaml, and scripts to instance" | tee -a "$LOG_FILE"
             scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no config.yaml config_schema.yaml validate_config.py generate_service_options.py opc@${{ env.INSTANCE_IP }}:/tmp/ 2>>"$LOG_FILE" || { echo "Error: Failed to SCP files to instance" | tee -a "$LOG_FILE"; exit 1; }
             # Copy files to container
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/config.yaml $CONTAINER_NAME:$CONFIG_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy config.yaml to container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/config_schema.yaml $CONTAINER_NAME:$SCHEMA_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy config_schema.yaml to container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/validate_config.py $CONTAINER_NAME:$VALIDATE_SCRIPT" 2>>"$LOG_FILE" || { echo "Error: Failed to copy validate_config.py to container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/generate_service_options.py $CONTAINER_NAME:$GENERATE_SCRIPT" 2>>"$LOG_FILE" || { echo "Error: Failed to copy generate_service_options.py to container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/config.yaml $CONTAINER_NAME:$CONFIG_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy config.yaml to container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/config_schema.yaml $CONTAINER_NAME:$SCHEMA_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy config_schema.yaml to container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/validate_config.py $CONTAINER_NAME:$VALIDATE_SCRIPT" 2>>"$LOG_FILE" || { echo "Error: Failed to copy validate_config.py to container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/generate_service_options.py $CONTAINER_NAME:$GENERATE_SCRIPT" 2>>"$LOG_FILE" || { echo "Error: Failed to copy generate_service_options.py to container" | tee -a "$LOG_FILE"; exit 1; }
             # Clean up temporary files on instance
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/config.yaml /tmp/config_schema.yaml /tmp/validate_config.py /tmp/generate_service_options.py" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary files from instance" | tee -a "$LOG_FILE"
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "rm -f /tmp/config.yaml /tmp/config_schema.yaml /tmp/validate_config.py /tmp/generate_service_options.py" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary files from instance" | tee -a "$LOG_FILE"
             # Validate config.yaml
             echo "Validating config.yaml in container" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 $VALIDATE_SCRIPT" >>"$LOG_FILE" 2>&1 || { echo "Error: Config validation failed" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME python3 $VALIDATE_SCRIPT" >>"$LOG_FILE" 2>&1 || { echo "Error: Config validation failed" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
             # Generate service_options.json
             echo "Generating service_options.json in container" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 $GENERATE_SCRIPT $WF_TYPE" >>"$LOG_FILE" 2>&1 || { echo "Error: Failed to generate service_options.json" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME python3 $GENERATE_SCRIPT $WF_TYPE" >>"$LOG_FILE" 2>&1 || { echo "Error: Failed to generate service_options.json" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
             # Copy service_options.json back to instance and runner
             echo "Copying service_options.json from container to instance" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp $CONTAINER_NAME:$SERVICE_JSON_PATH /tmp/service_options.json" 2>>"$LOG_FILE" || { echo "Error: Failed to copy service_options.json from container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp $CONTAINER_NAME:$SERVICE_JSON_PATH /tmp/service_options.json" 2>>"$LOG_FILE" || { echo "Error: Failed to copy service_options.json from container" | tee -a "$LOG_FILE"; exit 1; }
             echo "Copying service_options.json to runner" | tee -a "$LOG_FILE"
-            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }}:/tmp/service_options.json /tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to SCP service_options.json to runner" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/service_options.json" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary service_options.json from instance" | tee -a "$LOG_FILE"
+            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP":/tmp/service_options.json /tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to SCP service_options.json to runner" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "rm -f /tmp/service_options.json" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary service_options.json from instance" | tee -a "$LOG_FILE"
             echo "Generated service_options.json:" | tee -a "$LOG_FILE"
             cat /tmp/service_options.json >> "$LOG_FILE"
 
@@ -2069,7 +2061,7 @@ jobs:
             fi
             echo "Contents of /tmp/service_options.json:" | tee -a "$LOG_FILE"
             cat /tmp/service_options.json >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to read /tmp/service_options.json" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/service_options.json $CONTAINER_NAME:$SERVICE_JSON_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy service_options.json to container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/service_options.json $CONTAINER_NAME:$SERVICE_JSON_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy service_options.json to container" | tee -a "$LOG_FILE"; exit 1; }
             WF_TYPE=$(grep "workflow_type" /tmp/${PREFIX}_setUpOCI.properties | cut -d= -f2)
             if [ -z "$WF_TYPE" ]; then
               echo "Error: Workflow type not found in setUpOCI.properties" | tee -a "$LOG_FILE"
@@ -2078,8 +2070,8 @@ jobs:
             echo "Workflow type: $WF_TYPE" | tee -a "$LOG_FILE"
             # Check properties file and setUpOCI.py in container
             echo "Checking properties file and setUpOCI.py in container" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME ls $PROPERTIES_PATH" >>"$LOG_FILE" 2>&1 || { echo "Error: Properties file $PROPERTIES_PATH not found in container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME ls /cd3user/oci_tools/cd3_automation_toolkit/setUpOCI.py" >>"$LOG_FILE" 2>&1 || { echo "Error: setUpOCI.py not found in container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME ls $PROPERTIES_PATH" >>"$LOG_FILE" 2>&1 || { echo "Error: Properties file $PROPERTIES_PATH not found in container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME ls /cd3user/oci_tools/cd3_automation_toolkit/setUpOCI.py" >>"$LOG_FILE" 2>&1 || { echo "Error: setUpOCI.py not found in container" | tee -a "$LOG_FILE"; exit 1; }
             # Create and copy validate_cd3 script
             echo "Creating validate_cd3 script" | tee -a "$LOG_FILE"
             cat << EOF > get_validate_cd3.py
@@ -2105,12 +2097,12 @@ jobs:
                 sys.exit(1)
             EOF
             echo "Copying validate_cd3 script to instance" | tee -a "$LOG_FILE"
-            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no get_validate_cd3.py opc@${{ env.INSTANCE_IP }}:/tmp/get_validate_cd3.py 2>>"$LOG_FILE" || { echo "Error: Failed to SCP validate_cd3 script to instance" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/get_validate_cd3.py $CONTAINER_NAME:$VALIDATE_SCRIPT" 2>>"$LOG_FILE" || { echo "Error: Failed to copy validate_cd3 script to container" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/get_validate_cd3.py" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary validate_cd3 script from instance" | tee -a "$LOG_FILE"
+            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no get_validate_cd3.py opc@"$INSTANCE_IP":/tmp/get_validate_cd3.py 2>>"$LOG_FILE" || { echo "Error: Failed to SCP validate_cd3 script to instance" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/get_validate_cd3.py $CONTAINER_NAME:$VALIDATE_SCRIPT" 2>>"$LOG_FILE" || { echo "Error: Failed to copy validate_cd3 script to container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "rm -f /tmp/get_validate_cd3.py" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary validate_cd3 script from instance" | tee -a "$LOG_FILE"
             # Run validate_cd3 script
             echo "Reading validate_cd3 from config.yaml" | tee -a "$LOG_FILE"
-            VALIDATE=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 $VALIDATE_SCRIPT $WF_TYPE") 2>>"$LOG_FILE" || { echo "Error: Failed to read validate_cd3 from config.yaml" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+            VALIDATE=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME python3 $VALIDATE_SCRIPT $WF_TYPE") 2>>"$LOG_FILE" || { echo "Error: Failed to read validate_cd3 from config.yaml" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
             echo "Validate CD3: $VALIDATE" | tee -a "$LOG_FILE"
             if [ "$VALIDATE" = "true" ]; then
               echo "Running Validate CD3 for $WF_TYPE..." | tee -a "$LOG_FILE"
@@ -2119,7 +2111,7 @@ jobs:
                 VALIDATE_SUB_OPTION="Validate $main_option"
                 CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --main_options=\"Validate\" --sub_options=\"$VALIDATE_SUB_OPTION\""
                 echo "Executing: $CMD" | tee -a "$LOG_FILE"
-                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Validation failed for $main_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Validation failed for $main_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
               done
             fi
             jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
@@ -2145,7 +2137,7 @@ jobs:
                 echo "Sub-options for $main_option: $SUB_OPTIONS" | tee -a "$LOG_FILE"
                 CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=true --main_options=$main_option --sub_options=\"$SUB_OPTIONS\""
                 echo "Executing: $CMD" | tee -a "$LOG_FILE"
-                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run workflow for $main_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run workflow for $main_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
               else
                 # Handle object with sub_options and sub_child_options
                 jq -r --arg key "$main_option" '.[$key] | to_entries[] | .key' /tmp/service_options.json 2>>"$LOG_FILE" | while read -r sub_option; do
@@ -2162,7 +2154,7 @@ jobs:
                     CMD="$CMD --sub_child_options=\"$SUB_CHILD_OPTIONS\""
                   fi
                   echo "Executing: $CMD" | tee -a "$LOG_FILE"
-                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run workflow for $main_option:$sub_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run workflow for $main_option:$sub_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
                 done
               fi
               echo "Workflow completed for $main_option" | tee -a "$LOG_FILE"
@@ -2203,7 +2195,7 @@ jobs:
               CMD="$CMD --tags $TAGS"
             fi
             echo "Executing: $CMD" | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >>"$LOG_FILE" 2>&1 || { echo "Error: Failed to run setUpOCI for export_resources" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >>"$LOG_FILE" 2>&1 || { echo "Error: Failed to run setUpOCI for export_resources" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
             echo "setUpOCI export workflow completed successfully" | tee -a "$LOG_FILE"
 
         - name: Retrieve Exported Files
@@ -2222,9 +2214,9 @@ jobs:
             EXPORTED_DIR="/cd3user/tenancies/$PREFIX/cd3_files"
             LOCAL_DIR="/tmp/exported_files"
             mkdir -p "$LOCAL_DIR" 2>>"$LOG_FILE" || { echo "Error: Failed to create local directory $LOCAL_DIR" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp $CONTAINER_NAME:$EXPORTED_DIR /tmp/exported_files" 2>>"$LOG_FILE" || { echo "Error: Failed to copy exported files from container" | tee -a "$LOG_FILE"; exit 1; }
-            scp -r -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }}:/tmp/exported_files/* "$LOCAL_DIR" 2>>"$LOG_FILE" || { echo "Error: Failed to SCP exported files to runner" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -rf /tmp/exported_files" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary exported files" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp $CONTAINER_NAME:$EXPORTED_DIR /tmp/exported_files" 2>>"$LOG_FILE" || { echo "Error: Failed to copy exported files from container" | tee -a "$LOG_FILE"; exit 1; }
+            scp -r -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP":/tmp/exported_files/* "$LOCAL_DIR" 2>>"$LOG_FILE" || { echo "Error: Failed to SCP exported files to runner" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "rm -rf /tmp/exported_files" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary exported files" | tee -a "$LOG_FILE"; exit 1; }
             echo "Exported files retrieved to $LOCAL_DIR:" | tee -a "$LOG_FILE"
             ls -l "$LOCAL_DIR" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list exported files" | tee -a "$LOG_FILE"; exit 1; }
             echo "Retrieve Exported Files completed successfully" | tee -a "$LOG_FILE"
@@ -2251,13 +2243,13 @@ jobs:
               echo "Workflow type: $WF_TYPE" | tee -a "$LOG_FILE"
           
               # Validate INSTANCE_IP
-              if [ -z "${{ env.INSTANCE_IP }}" ]; then
+              if [ -z "$INSTANCE_IP" ]; then
                 echo "Error: INSTANCE_IP is empty" | tee -a "$LOG_FILE"
                 exit 1
               fi
           
               # Get short region key
-              SHORT_REGION=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OCI_REGIONS_FILE | grep \":$REGION\" | cut -d: -f1'") 2>>"$LOG_FILE"
+              SHORT_REGION=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OCI_REGIONS_FILE | grep \":$REGION\" | cut -d: -f1'") 2>>"$LOG_FILE"
               if [ -z "$SHORT_REGION" ]; then
                 echo "Error: Failed to find short region key for $REGION in $OCI_REGIONS_FILE" | tee -a "$LOG_FILE"
                 exit 1
@@ -2272,7 +2264,7 @@ jobs:
           
               # Check if outdir_structure_file.properties exists
               USE_OUTDIR_STRUCTURE=false
-              if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME test -f $OUTDIR_STRUCTURE_FILE" 2>>"$LOG_FILE"; then
+              if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME test -f $OUTDIR_STRUCTURE_FILE" 2>>"$LOG_FILE"; then
                 USE_OUTDIR_STRUCTURE=true
                 echo "Outdir structure enabled: true" | tee -a "$LOG_FILE"
               else
@@ -2315,7 +2307,7 @@ jobs:
           
                 # Get service directory
                 if [ "$USE_OUTDIR_STRUCTURE" = true ]; then
-                  SERVICE_DIR=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OUTDIR_STRUCTURE_FILE | grep -i \"^$SERVICE_NAME=\" | cut -d= -f2'") 2>>"$LOG_FILE"
+                  SERVICE_DIR=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OUTDIR_STRUCTURE_FILE | grep -i \"^$SERVICE_NAME=\" | cut -d= -f2'") 2>>"$LOG_FILE"
                   if [ -z "$SERVICE_DIR" ]; then
                     echo "Warning: No directory mapping found for $SERVICE_NAME in $OUTDIR_STRUCTURE_FILE, skipping $main_option" | tee -a "$LOG_FILE"
                     continue
@@ -2328,13 +2320,13 @@ jobs:
           
           
                 # Check if TF_DIR exists
-                if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
+                if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
                   echo "Warning: Directory $TF_DIR does not exist, skipping $main_option" | tee -a "$LOG_FILE"
                   continue
                 fi
           
                 # Find latest .tfvars file
-                LATEST_TFVARS=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'ls -t $TF_DIR/*.tfvars 2>/dev/null | head -n 1'") 2>>"$LOG_FILE"
+                LATEST_TFVARS=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'ls -t $TF_DIR/*.tfvars 2>/dev/null | head -n 1'") 2>>"$LOG_FILE"
                 if [ -z "$LATEST_TFVARS" ]; then
                   echo "Warning: No .tfvars files found in $TF_DIR, skipping $main_option" | tee -a "$LOG_FILE"
                   continue
@@ -2342,7 +2334,7 @@ jobs:
                 echo "Latest .tfvars file: $LATEST_TFVARS" | tee -a "$LOG_FILE"
           
                 # Check if .tfvars file is recent (within 1 hour)
-                if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'find $LATEST_TFVARS -mmin -60'" 2>>"$LOG_FILE"; then
+                if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'find $LATEST_TFVARS -mmin -60'" 2>>"$LOG_FILE"; then
                   echo "Warning: $LATEST_TFVARS is older than 1 hour, skipping $main_option" | tee -a "$LOG_FILE"
                   continue
                 fi
@@ -2358,7 +2350,7 @@ jobs:
                 for cmd in "${COMMANDS[@]}"; do
                   RETRY_COUNT=0
                   MAX_RETRIES=3
-                  until ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform $cmd'" >> "$LOG_FILE" 2>&1; do
+                  until ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform $cmd'" >> "$LOG_FILE" 2>&1; do
                     RETRY_COUNT=$((RETRY_COUNT + 1))
                     if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
                       echo "Error: Terraform $cmd failed for $main_option after $MAX_RETRIES retries, continuing" | tee -a "$LOG_FILE"
@@ -2372,7 +2364,7 @@ jobs:
                   fi
                   if [ "$cmd" = "plan -var-file=$LATEST_TFVARS -out=tfplan" ] && [ "$WF_TYPE" = "export_resources" ]; then
                     PLAN_FILE="/tmp/terraform_plans/${main_option}_tfplan_$(date +%F_%H-%M-%S).txt"
-                    ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform show -no-color tfplan'" > "$PLAN_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to save terraform plan for $main_option" | tee -a "$LOG_FILE"; exit 1; }
+                    ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform show -no-color tfplan'" > "$PLAN_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to save terraform plan for $main_option" | tee -a "$LOG_FILE"; exit 1; }
                     echo "Terraform plan saved to $PLAN_FILE for $main_option" | tee -a "$LOG_FILE"
                   fi
                 done
