@@ -366,7 +366,6 @@ jobs:
     if: ${{ always() && (inputs.use_existing_instance == 'true' || needs.Deploy_RM_Stack.result == 'success') }}
     needs: [Validate_Inputs]
     runs-on: self-hosted
-    needs: Deploy_RM_Stack
     env:
       OCI_REGION: us-phoenix-1
       INSTANCE_NAME: workvm-${{ github.run_id }}
