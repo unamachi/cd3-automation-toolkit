@@ -33,7 +33,7 @@ on:
           required: false
 jobs:
   Deploy_RM_Stack:
-    if: ${{ github.event.inputs.use_existing_instance == 'false' }}
+    if: ${{ github.event.inputs.use_existing_instance != 'true' }}
     runs-on: [self-hosted]
     outputs:
       stack_id: ${{ steps.create-stack.outputs.stack_id }}
@@ -341,7 +341,7 @@ jobs:
         run: echo "✅ Deploy RM stack is completed successfully...!"
 
   Dependency_Control:
-      if: ${{ github.event.inputs.use_existing_instance == 'false' }}
+      if: ${{ github.event.inputs.use_existing_instance != 'true' }}
       needs: [Deploy_RM_Stack]
       runs-on: [self-hosted]
       outputs:
@@ -353,7 +353,7 @@ jobs:
 
   CD3_Bootstrap:
     needs: [Dependency_Control]
-    if: ${{ github.event.inputs.use_existing_instance == 'true' || needs.Dependency_Control.outputs.can_proceed == 'true' }}
+     if: ${{ github.event.inputs.use_existing_instance == 'true' || needs.Dependency_Control.outputs.can_proceed == 'true' }}
     runs-on: self-hosted
     env:
       OCI_REGION: us-phoenix-1
