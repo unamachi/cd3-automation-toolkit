@@ -341,8 +341,16 @@ jobs:
         run: echo "✅ Deploy RM stack is completed successfully...!"
 
   CD3_Bootstrap:
-    needs: [Deploy_RM_Stack]
-    if: ${{ github.event.inputs.use_existing_instance == 'true' || needs.Deploy_RM_Stack.result == 'success' }}
+    strategy:
+      matrix:
+        use_existing:
+          - ${{ github.event.inputs.use_existing_instance == 'true' }}
+          - ${{ github.event.inputs.use_existing_instance != 'true' }}
+        include:
+          - use_existing: false
+            needs: [Deploy_RM_Stack]
+          - use_existing: true
+    if: ${{ matrix.use_existing || needs.Deploy_RM_Stack.result == 'success' }}
     runs-on: self-hosted
     env:
       OCI_REGION: us-phoenix-1
