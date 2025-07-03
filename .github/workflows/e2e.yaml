@@ -340,17 +340,18 @@ jobs:
       - name: Deploy RM Stack
         run: echo "✅ Deploy RM stack is completed successfully...!"
 
+
+  Dependency_Control:
+    if: ${{ github.event.inputs.use_existing_instance == 'false' }}
+    needs: [Deploy_RM_Stack]
+    runs-on: [self-hosted]
+    steps:
+      - name: Dummy Step for Dependency
+        run: echo "Dependency control for Deploy_RM_Stack"
+
   CD3_Bootstrap:
-    strategy:
-      matrix:
-        use_existing:
-          - ${{ github.event.inputs.use_existing_instance == 'true' }}
-          - ${{ github.event.inputs.use_existing_instance != 'true' }}
-        include:
-          - use_existing: false
-            needs: [Deploy_RM_Stack]
-          - use_existing: true
-    if: ${{ matrix.use_existing || needs.Deploy_RM_Stack.result == 'success' }}
+    needs: [Dependency_Control]
+    if: ${{ github.event.inputs.use_existing_instance == 'true' || needs.Dependency_Control.result == 'success' }}}
     runs-on: self-hosted
     env:
       OCI_REGION: us-phoenix-1
