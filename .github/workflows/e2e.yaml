@@ -353,7 +353,7 @@ jobs:
 
   CD3_Bootstrap:
     needs: [Dependency_Control]
-     if: ${{ github.event.inputs.use_existing_instance == 'true' || needs.Dependency_Control.outputs.can_proceed == 'true' }}
+    if: ${{ github.event.inputs.use_existing_instance == 'true' || needs.Dependency_Control.outputs.can_proceed == 'true' }}
     runs-on: self-hosted
     env:
       OCI_REGION: us-phoenix-1
