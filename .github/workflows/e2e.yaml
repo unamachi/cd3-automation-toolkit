@@ -43,13 +43,10 @@ jobs:
             exit 1
           fi
           if [ "$USE_EXISTING" = "true" ]; then
-            for INPUT in instance_ip public_ip; do
-              INPUT_VALUE="${{ github.event.inputs[INPUT] }}"
-              if [ -z "$INPUT_VALUE" ]; then
-                echo "Error: $INPUT is required when use_existing_instance=true" | tee -a "$LOG_FILE"
-                exit 1
-              fi
-            done
+            if [ -z "${{ github.event.inputs.instance_ip }}" ]; then
+              echo "Error: instance_ip is required when use_existing_instance=true" | tee -a "$LOG_FILE"
+              exit 1
+            fi
           fi
           echo "Input validation passed" | tee -a "$LOG_FILE"
   Deploy_RM_Stack:
