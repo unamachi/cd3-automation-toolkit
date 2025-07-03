@@ -342,7 +342,6 @@ jobs:
 
   CD3_Bootstrap:
     if: ${{ always() && (inputs.use_existing_instance == 'true' || needs.Deploy_RM_Stack.result == 'success') }}
-    needs: [Validate_Inputs]
     runs-on: self-hosted
     env:
       OCI_REGION: us-phoenix-1
