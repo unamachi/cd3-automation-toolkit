@@ -11,44 +11,48 @@ on:
         description: 'Custom prefix for tenancy config (default: <branch>-<run_id>)'
         required: false
       region:
-        description: 'OCI region (e.g., us-phoenix-1)'
-        required: true
-        default: 'us-phoenix-1'
+          description: 'OCI region (e.g., us-phoenix-1)'
+          required: true
+          default: 'us-phoenix-1'
       verify_resources:
-        description: 'Verify created resources (true/false)'
-        type: boolean
-        required: false
-        default: false
+          description: 'Verify created resources (true/false)'
+          type: boolean
+          required: false
+          default: false
+      #Changes    
       use_existing_instance:
-        description: 'Use existing instance (true/false)'
-        type: boolean
-        required: false
-        default: false
+          description: 'Use existing instance (true/false)'
+          type: boolean
+          required: false
+          default: false
       instance_ip:
-        description: 'Private IP of existing instance (required if use_existing_instance=true)'
-        required: false
+          description: 'Private IP of existing instance (required if use_existing_instance=true)'
+          required: false
       instance_ocid:
-        description: 'OCID of existing instance (optional for validation)'
-        required: false
+          description: 'OCID of existing instance (optional for validation)'
+          required: false
 jobs:
   Validate_Inputs:
-    runs-on: self-hosted
-    steps:
-      - name: Check use_existing_instance
-        run: |
-          LOG_FILE="/tmp/validate_inputs_$(date +%F_%H-%M-%S).log"
-          USE_EXISTING="${{ github.event.inputs.use_existing_instance }}"
-          if [ "$USE_EXISTING" != "true" ] && [ "$USE_EXISTING" != "false" ]; then
-            echo "Error: use_existing_instance must be 'true' or 'false', got '$USE_EXISTING'" | tee -a "$LOG_FILE"
-            exit 1
-          fi
-          if [ "$USE_EXISTING" = "true" ]; then
-            if [ -z "${{ github.event.inputs.instance_ip }}" ]; then
-              echo "Error: instance_ip is required when use_existing_instance=true" | tee -a "$LOG_FILE"
+      runs-on: self-hosted
+      steps:
+        - name: Check use_existing_instance
+          run: |
+            LOG_FILE="/tmp/validate_inputs_$(date +%F_%H-%M-%S).log"
+            USE_EXISTING="${{ github.event.inputs.use_existing_instance }}"
+            if [ "$USE_EXISTING" != "true" ] && [ "$USE_EXISTING" != "false" ]; then
+              echo "Error: use_existing_instance must be 'true' or 'false', got '$USE_EXISTING'" | tee -a "$LOG_FILE"
               exit 1
             fi
-          fi
-          echo "Input validation passed" | tee -a "$LOG_FILE"
+            if [ "$USE_EXISTING" = "true" ]; then
+              for INPUT in instance_ip instance_ocid public_ip; do
+                INPUT_VALUE="${{ github.event.inputs[INPUT] }}"
+                if [ -z "$INPUT_VALUE" ]; then
+                  echo "Error: $INPUT is required when use_existing_instance=true" | tee -a "$LOG_FILE"
+                  exit 1
+                fi
+              done
+            fi
+            echo "Input validation passed" | tee -a "$LOG_FILE"
   Deploy_RM_Stack:
     if: ${{ github.event.inputs.use_existing_instance == 'false' }}
     needs: Validate_Inputs
@@ -78,6 +82,7 @@ jobs:
           if ! command -v git &> /dev/null; then
             sudo yum install -y git
           fi
+      
       - name: Install yq
         run: |
           LOG_FILE="/tmp/yq_install_$(date +%F_%H-%M-%S).log"
@@ -101,6 +106,7 @@ jobs:
           rm -f /tmp/${YQ_BINARY}.tar.gz 2>>"$LOG_FILE" || echo "Warning: Failed to remove yq tarball" | tee -a "$LOG_FILE"
           yq --version >> "$LOG_FILE" 2>&1 || { echo "Error: yq installation failed" | tee -a "$LOG_FILE"; exit 1; }
           echo "yq installed successfully" | tee -a "$LOG_FILE"
+
       - name: Validate Single Workflow
         if: ${{ github.event.inputs.use_existing_instance != 'true' }}
         id: validate_workflow
@@ -127,6 +133,7 @@ jobs:
             echo "export_resources_enabled=true" >> $GITHUB_OUTPUT
           fi
           echo "Workflow validation completed successfully" | tee -a "$LOG_FILE"
+
       - name: Generate Temporary SSH Key Pair
         if: ${{ github.event.inputs.use_existing_instance != 'true' }}
         run: |
@@ -143,96 +150,97 @@ jobs:
           retention-days: 1
       - name: Retrieve secret contents from OCI Vault
         env:
-          TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
-          USER_SECRET_OCID: ${{ secrets.USER_SECRET_OCID }}
-          COMPARTMENT_SECRET_OCID: ${{ secrets.COMPARTMENT_SECRET_OCID }}
-          VCN_COMPARTMENT_SECRET_OCID: ${{ secrets.VCN_COMPARTMENT_SECRET_OCID }}
-          VCN_ID_SECRET_OCID: ${{ secrets.VCN_ID_SECRET_OCID }}
-          SUBNET_ID_SECRET_OCID: ${{ secrets.SUBNET_ID_SECRET_OCID }}
-          SSH_KEY_SECRET_OCID: ${{ secrets.SSH_KEY_SECRET_OCID }}
-          OCI_REGION: us-phoenix-1
+              TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
+              USER_SECRET_OCID: ${{ secrets.USER_SECRET_OCID }}
+              COMPARTMENT_SECRET_OCID: ${{ secrets.COMPARTMENT_SECRET_OCID }}
+              VCN_COMPARTMENT_SECRET_OCID: ${{ secrets.VCN_COMPARTMENT_SECRET_OCID }}
+              VCN_ID_SECRET_OCID: ${{ secrets.VCN_ID_SECRET_OCID }}
+              SUBNET_ID_SECRET_OCID: ${{ secrets.SUBNET_ID_SECRET_OCID }}
+              SSH_KEY_SECRET_OCID: ${{ secrets.SSH_KEY_SECRET_OCID }}
+              OCI_REGION: us-phoenix-1
         run: |
-          set -e
-          LOG_FILE="/tmp/secret_retrieval_$(date +%F_%H-%M-%S).log"
-          touch "$LOG_FILE" || { echo "Error: Failed to create log file $LOG_FILE" >&2; exit 1; }
-          echo "Starting secret retrieval at $(date)" | tee -a "$LOG_FILE"
-          for OCID in "$TENANCY_SECRET_OCID" "$USER_SECRET_OCID" "$COMPARTMENT_SECRET_OCID" "$VCN_COMPARTMENT_SECRET_OCID" "$VCN_ID_SECRET_OCID" "$SUBNET_ID_SECRET_OCID"; do
-            if [ -z "$OCID" ]; then
-              echo "Error: One or more secret OCIDs not set in GitHub Secrets" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-          done
-          TEMP_SECRET_FILE="/tmp/secret_temp_$(date +%F_%H-%M-%S).txt"
-          TENANCY_OCID=$(oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
-          USER_OCID=$(oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
-          COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
-          VCN_COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$VCN_COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
-          EXISTING_VCN_ID=$(oci secrets secret-bundle get --secret-id "$VCN_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
-          EXISTING_SUBNET_ID=$(oci secrets secret-bundle get --secret-id "$SUBNET_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
-          for VALUE in "$COMPARTMENT_OCID" "$VCN_COMPARTMENT_OCID" "$EXISTING_VCN_ID" "$EXISTING_SUBNET_ID"; do
-            if [ -z "$VALUE" ]; then
-              echo "Error: One or more secret values are empty" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-          done
-          SSH_PUBLIC_KEYS="${{ env.TEMP_SSH_PUBLIC_KEY }}"
-          if [ -n "$SSH_KEY_SECRET_OCID" ]; then
-            oci secrets secret-bundle get --secret-id "$SSH_KEY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to retrieve SSH_KEY_SECRET_OCID" | tee -a "$LOG_FILE"; exit 1; }
-            CUSTOMER_SSH_PUBLIC_KEY=$(base64 --decode "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to decode SSH_KEY_SECRET_OCID" | tee -a "$LOG_FILE"; exit 1; })
-            SSH_PUBLIC_KEYS="$SSH_PUBLIC_KEYS\n$CUSTOMER_SSH_PUBLIC_KEY"
-            echo "Retrieved customer SSH public key from OCI Vault" | tee -a "$LOG_FILE"
-          else
-            echo "Warning: SSH_KEY_SECRET_OCID is unset, only temporary key will be used" | tee -a "$LOG_FILE"
-          fi
-          rm -f "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || echo "Warning: Failed to remove $TEMP_SECRET_FILE" | tee -a "$LOG_FILE"
-          jq -n \
-            --arg instance_compartment_ocid "$COMPARTMENT_OCID" \
-            --arg vcn_compartment_ocid "$VCN_COMPARTMENT_OCID" \
-            --arg existing_vcn_id "$EXISTING_VCN_ID" \
-            --arg existing_subnet_id "$EXISTING_SUBNET_ID" \
-            --arg ssh_public_key "$SSH_PUBLIC_KEYS" \
-            --arg tenancy_ocid "$TENANCY_OCID" \
-            --arg user_ocid "$USER_OCID" \
-            --arg region "$OCI_REGION" \
-            --arg source_cidr '["10.0.0.0/24"]' \
-            --arg instance_name "workvm-${{ github.run_id }}" \
-            '{
-              instance_compartment_strategy: "Use Existing Compartment",
-              tenancy_ocid: $tenancy_ocid,
-              current_user_ocid: $user_ocid,
-              region: $region,
-              instance_compartment_ocid: $instance_compartment_ocid,
-              parent_compartment_ocid: "",
-              new_compartment_name: "",
-              instance_name: $instance_name,
-              instance_os_version: "Oracle-Linux-9",
-              instance_shape: "VM.Standard3.Flex",
-              instance_ocpus: 2,
-              instance_ram: 8,
-              boot_volume_size: 50,
-              instance_ad: "wdWU:PHX-AD-1",
-              instance_fd: "FAULT-DOMAIN-1",
-              ssh_public_key: $ssh_public_key,
-              vcn_strategy: "Use Existing VCN",
-              vcn_compartment_ocid: $vcn_compartment_ocid,
-              existing_vcn_id: $existing_vcn_id,
-              existing_subnet_id: $existing_subnet_id,
-              assign_publicip_existing_subnet: true,
-              assign_existing_nsg: false,
-              existing_nsg_id: "",
-              vcn_name: "",
-              vcn_cidr: "",
-              vcn_dns_label: "",
-              subnet_name: "",
-              subnet_cidr: "",
-              subnet_dns_label: "",
-              subnet_type: "",
-              assign_public_ip: true,
-              drg_attachment: false,
-              existing_drg_id: "",
-              source_cidr: $source_cidr
-            }' > variables.json
-          echo "Variables file created successfully" | tee -a "$LOG_FILE"
+              set -e
+              LOG_FILE="/tmp/secret_retrieval_$(date +%F_%H-%M-%S).log"
+              touch "$LOG_FILE" || { echo "Error: Failed to create log file $LOG_FILE" >&2; exit 1; }
+              echo "Starting secret retrieval at $(date)" | tee -a "$LOG_FILE"
+              for OCID in "$TENANCY_SECRET_OCID" "$USER_SECRET_OCID" "$COMPARTMENT_SECRET_OCID" "$VCN_COMPARTMENT_SECRET_OCID" "$VCN_ID_SECRET_OCID" "$SUBNET_ID_SECRET_OCID"; do
+                if [ -z "$OCID" ]; then
+                  echo "Error: One or more secret OCIDs not set in GitHub Secrets" | tee -a "$LOG_FILE"
+                  exit 1
+                fi
+              done
+              TEMP_SECRET_FILE="/tmp/secret_temp_$(date +%F_%H-%M-%S).txt"
+              TENANCY_OCID=$(oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
+              USER_OCID=$(oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
+              COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
+              VCN_COMPARTMENT_OCID=$(oci secrets secret-bundle get --secret-id "$VCN_COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
+              EXISTING_VCN_ID=$(oci secrets secret-bundle get --secret-id "$VCN_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
+              EXISTING_SUBNET_ID=$(oci secrets secret-bundle get --secret-id "$SUBNET_ID_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
+              for VALUE in "$COMPARTMENT_OCID" "$VCN_COMPARTMENT_OCID" "$EXISTING_VCN_ID" "$EXISTING_SUBNET_ID"; do
+                if [ -z "$VALUE" ]; then
+                  echo "Error: One or more secret values are empty" | tee -a "$LOG_FILE"
+                  exit 1
+                fi
+              done
+              # Retrieve OCI Vault public key (optional)
+              SSH_PUBLIC_KEYS="${{ env.TEMP_SSH_PUBLIC_KEY }}"
+              if [ -n "$SSH_KEY_SECRET_OCID" ]; then
+                oci secrets secret-bundle get --secret-id "$SSH_KEY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to retrieve SSH_KEY_SECRET_OCID" | tee -a "$LOG_FILE"; exit 1; }
+                CUSTOMER_SSH_PUBLIC_KEY=$(base64 --decode "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to decode SSH_KEY_SECRET_OCID" | tee -a "$LOG_FILE"; exit 1; })
+                SSH_PUBLIC_KEYS="$SSH_PUBLIC_KEYS\n$CUSTOMER_SSH_PUBLIC_KEY"
+                echo "Retrieved customer SSH public key from OCI Vault" | tee -a "$LOG_FILE"
+              else
+                echo "Warning: SSH_KEY_SECRET_OCID is unset, only temporary key will be used" | tee -a "$LOG_FILE"
+              fi
+              rm -f "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || echo "Warning: Failed to remove $TEMP_SECRET_FILE" | tee -a "$LOG_FILE"
+              jq -n \
+                --arg instance_compartment_ocid "$COMPARTMENT_OCID" \
+                --arg vcn_compartment_ocid "$VCN_COMPARTMENT_OCID" \
+                --arg existing_vcn_id "$EXISTING_VCN_ID" \
+                --arg existing_subnet_id "$EXISTING_SUBNET_ID" \
+                --arg ssh_public_key "$SSH_PUBLIC_KEYS" \
+                --arg tenancy_ocid "$TENANCY_OCID" \
+                --arg user_ocid "$USER_OCID" \
+                --arg region "$OCI_REGION" \
+                --arg source_cidr '["10.0.0.0/24"]' \
+                --arg instance_name "workvm-${{ github.run_id }}" \
+                '{
+                  instance_compartment_strategy: "Use Existing Compartment",
+                  tenancy_ocid: $tenancy_ocid,
+                  current_user_ocid: $user_ocid,
+                  region: $region,
+                  instance_compartment_ocid: $instance_compartment_ocid,
+                  parent_compartment_ocid: "",
+                  new_compartment_name: "",
+                  instance_name: $instance_name,
+                  instance_os_version: "Oracle-Linux-9",
+                  instance_shape: "VM.Standard3.Flex",
+                  instance_ocpus: 2,
+                  instance_ram: 8,
+                  boot_volume_size: 50,
+                  instance_ad: "wdWU:PHX-AD-1",
+                  instance_fd: "FAULT-DOMAIN-1",
+                  ssh_public_key: $ssh_public_key,
+                  vcn_strategy: "Use Existing VCN",
+                  vcn_compartment_ocid: $vcn_compartment_ocid,
+                  existing_vcn_id: $existing_vcn_id,
+                  existing_subnet_id: $existing_subnet_id,
+                  assign_publicip_existing_subnet: true,
+                  assign_existing_nsg: false,
+                  existing_nsg_id: "",
+                  vcn_name: "",
+                  vcn_cidr: "",
+                  vcn_dns_label: "",
+                  subnet_name: "",
+                  subnet_cidr: "",
+                  subnet_dns_label: "",
+                  subnet_type: "",
+                  assign_public_ip: true,
+                  drg_attachment: false,
+                  existing_drg_id: "",
+                  source_cidr: $source_cidr
+                }' > variables.json
+              echo "Variables file created successfully" | tee -a "$LOG_FILE"
       - name: Set ZIP URL
         run: |
           echo "github.ref is: ${{ github.ref }}"
@@ -353,15 +361,17 @@ jobs:
           rm -rf "$GITHUB_WORKSPACE/stack_id.txt"
       - name: Deploy RM Stack
         run: echo "✅ Deploy RM stack is completed successfully...!"
+
   CD3_Bootstrap:
-    needs: [Validate_Inputs, Deploy_RM_Stack]
+    if: ${{ always() && (inputs.use_existing_instance == 'true' || needs.Deploy_RM_Stack.result == 'success') }}
+    needs: [Validate_Inputs]
     runs-on: self-hosted
+    needs: Deploy_RM_Stack
     env:
       OCI_REGION: us-phoenix-1
       INSTANCE_NAME: workvm-${{ github.run_id }}
       INSTANCE_IP: ${{ github.event.inputs.use_existing_instance == 'true' && github.event.inputs.instance_ip || needs.Deploy_RM_Stack.outputs.instance_ip }}
       INSTANCE_OCID: ${{ github.event.inputs.use_existing_instance == 'true' && github.event.inputs.instance_ocid || needs.Deploy_RM_Stack.outputs.instance_ocid }}
-      PUBLIC_IP: ${{ github.event.inputs.use_existing_instance == 'true' && github.event.inputs.public_ip || needs.Deploy_RM_Stack.outputs.public_ip }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -426,25 +436,26 @@ jobs:
         env:
           EXISTING_SSH_PRIVATE_KEY_OCID: ${{ secrets.EXISTING_SSH_PRIVATE_KEY_OCID }}
         run: |
-          LOG_FILE="/tmp/ssh_key_setup_$(date +%F_%H-%M-%S).log"
-          mkdir -p ~/.ssh
-          if [ "${{ github.event.inputs.use_existing_instance }}" = "true" ]; then
-            if [ -z "$EXISTING_SSH_PRIVATE_KEY_OCID" ]; then
-              echo "Error: EXISTING_SSH_PRIVATE_KEY_OCID secret required when use_existing_instance=true" | tee -a "$LOG_FILE"
-              exit 1
+            LOG_FILE="/tmp/ssh_key_setup_$(date +%F_%H-%M-%S).log"
+            mkdir -p ~/.ssh
+            if [ "${{ github.event.inputs.use_existing_instance }}" = "true" ]; then
+              if [ -z "$EXISTING_SSH_PRIVATE_KEY_OCID" ]; then
+                echo "Error: EXISTING_SSH_PRIVATE_KEY_OCID secret required when use_existing_instance=true" | tee -a "$LOG_FILE"
+                exit 1
+              fi
+              SSH_PRIVATE_KEY=$(oci secrets secret-bundle get --secret-id "$EXISTING_SSH_PRIVATE_KEY_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
+              if [ -z "$SSH_PRIVATE_KEY" ]; then
+                echo "Error: Failed to retrieve SSH private key from OCI Vault" | tee -a "$LOG_FILE"
+                exit 1
+              fi
+              echo "$SSH_PRIVATE_KEY" > ~/.ssh/temp-id_rsa 2>>"$LOG_FILE"
+              echo "::add-mask::$SSH_PRIVATE_KEY"
+            else
+              base64 -d temp-ssh-key.txt > ~/.ssh/temp-id_rsa 2>>"$LOG_FILE"
             fi
-            SSH_PRIVATE_KEY=$(oci secrets secret-bundle get --secret-id "$EXISTING_SSH_PRIVATE_KEY_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode 2>>"$LOG_FILE")
-            if [ -z "$SSH_PRIVATE_KEY" ]; then
-              echo "Error: Failed to retrieve SSH private key from OCI Vault" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            echo "$SSH_PRIVATE_KEY" > ~/.ssh/temp-id_rsa 2>>"$LOG_FILE"
-            echo "::add-mask::$SSH_PRIVATE_KEY"
-          else
-            base64 -d temp-ssh-key.txt > ~/.ssh/temp-id_rsa 2>>"$LOG_FILE"
-          fi
-          chmod 600 ~/.ssh/temp-id_rsa 2>>"$LOG_FILE" || { echo "Error: Failed to set SSH key permissions" | tee -a "$LOG_FILE"; exit 1; }
-          echo "SSH key configured" | tee -a "$LOG_FILE"
+            chmod 600 ~/.ssh/temp-id_rsa 2>>"$LOG_FILE" || { echo "Error: Failed to set SSH key permissions" | tee -a "$LOG_FILE"; exit 1; }
+            echo "SSH key configured" | tee -a "$LOG_FILE"
+
       - name: Wait for Instance to be Ready
         if: ${{ github.event.inputs.use_existing_instance != 'true' }}
         run: |
@@ -486,6 +497,8 @@ jobs:
           echo "INSTANCE_IP=$IP" >> $GITHUB_ENV
           echo "instance_ip=$IP" >> $GITHUB_OUTPUT
           echo "Found private IP."
+
+      #Changes      
       - name: Validate Inputs and Instance
         env:
           EXISTING_SSH_PRIVATE_KEY_OCID: ${{ secrets.EXISTING_SSH_PRIVATE_KEY_OCID }}
@@ -494,10 +507,6 @@ jobs:
           if [ "${{ github.event.inputs.use_existing_instance }}" = "true" ]; then
             if [ -z "${{ env.INSTANCE_IP }}" ]; then
               echo "Error: instance_ip required when use_existing_instance=true" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            if [ -z "${{ env.PUBLIC_IP }}" ]; then
-              echo "Error: public_ip required when use_existing_instance=true" | tee -a "$LOG_FILE"
               exit 1
             fi
             if [ -z "$EXISTING_SSH_PRIVATE_KEY_OCID" ]; then
@@ -530,24 +539,27 @@ jobs:
             done
           fi
           echo "Input and instance validation completed" | tee -a "$LOG_FILE"
+
       - name: Validate Workflow in CD3_Bootstrap
         id: validate_workflow
         run: |
-          LOG_FILE="/tmp/cd3_validate_workflow_$(date +%F_%H-%M-%S).log"
-          if [ ! -f "config.yaml" ]; then
-            echo "Error: config.yaml not found" | tee -a "$LOG_FILE"
-            exit 1
-          fi
-          ENABLED_COUNT=$(yq e '.cd3_workflows | with_entries(select(.value.enabled == true)) | length' config.yaml)
-          if [ "$ENABLED_COUNT" -ne 1 ]; then
-            echo "Error: Exactly one workflow must be enabled, found $ENABLED_COUNT" | tee -a "$LOG_FILE"
-            exit 1
-          fi
-          WF_TYPE=$(yq e '.cd3_workflows | with_entries(select(.value.enabled == true)) | keys | .[0]' config.yaml)
-          echo "workflow_type=$WF_TYPE" >> $GITHUB_OUTPUT
-          echo "create_resources_enabled=$([[ "$WF_TYPE" == "create_resources" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
-          echo "export_resources_enabled=$([[ "$WF_TYPE" == "export_resources" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
-          echo "Workflow $WF_TYPE validated" | tee -a "$LOG_FILE"
+              LOG_FILE="/tmp/cd3_validate_workflow_$(date +%F_%H-%M-%S).log"
+              if [ ! -f "config.yaml" ]; then
+                echo "Error: config.yaml not found" | tee -a "$LOG_FILE"
+                exit 1
+              fi
+              ENABLED_COUNT=$(yq e '.cd3_workflows | with_entries(select(.value.enabled == true)) | length' config.yaml)
+              if [ "$ENABLED_COUNT" -ne 1 ]; then
+                echo "Error: Exactly one workflow must be enabled, found $ENABLED_COUNT" | tee -a "$LOG_FILE"
+                exit 1
+              fi
+              WF_TYPE=$(yq e '.cd3_workflows | with_entries(select(.value.enabled == true)) | keys | .[0]' config.yaml)
+              echo "workflow_type=$WF_TYPE" >> $GITHUB_OUTPUT
+              echo "create_resources_enabled=$([[ "$WF_TYPE" == "create_resources" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+              echo "export_resources_enabled=$([[ "$WF_TYPE" == "export_resources" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+              echo "Workflow $WF_TYPE validated" | tee -a "$LOG_FILE"       
+
+
       - name: Test SSH Connection
         run: |
           LOG_FILE="/tmp/ssh_test_$(date +%F_%H-%M-%S).log"
@@ -582,162 +594,168 @@ jobs:
             fi
             echo "$VAR is set" | tee -a "$LOG_FILE"
           done
+      
       - name: Setup CD3 Automation Toolkit
         env:
-          TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
-          USER_SECRET_OCID: ${{ secrets.USER_SECRET_OCID }}
-          FINGERPRINT_SECRET_OCID: ${{ secrets.FINGERPRINT_SECRET_OCID }}
-          API_SECRET_OCID: ${{ secrets.API_SECRET_OCID }}
-          COMPARTMENT_SECRET_OCID: ${{ secrets.COMPARTMENT_SECRET_OCID }}
-          EXISTING_SSH_PRIVATE_KEY_OCID: ${{ secrets.EXISTING_SSH_PRIVATE_KEY_OCID }}
+            TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
+            USER_SECRET_OCID: ${{ secrets.USER_SECRET_OCID }}
+            FINGERPRINT_SECRET_OCID: ${{ secrets.FINGERPRINT_SECRET_OCID }}
+            API_SECRET_OCID: ${{ secrets.API_SECRET_OCID }}
+            COMPARTMENT_SECRET_OCID: ${{ secrets.COMPARTMENT_SECRET_OCID }}
+            EXISTING_SSH_PRIVATE_KEY_OCID: ${{ secrets.EXISTING_SSH_PRIVATE_KEY_OCID }}
         shell: bash
         run: |
-          set -e
-          LOG_FILE="/tmp/cd3_setup_$(date +%F_%H-%M-%S).log"
-          export TENANCY_SECRET_OCID="$TENANCY_SECRET_OCID"
-          export USER_SECRET_OCID="$USER_SECRET_OCID"
-          export FINGERPRINT_SECRET_OCID="$FINGERPRINT_SECRET_OCID"
-          export API_SECRET_OCID="$API_SECRET_OCID"
-          export COMPARTMENT_SECRET_OCID="$COMPARTMENT_SECRET_OCID"
-          export EXISTING_SSH_PRIVATE_KEY_OCID="$EXISTING_SSH_PRIVATE_KEY_OCID"
-          echo "Verifying secrets..." | tee -a "$LOG_FILE"
-          for VAR in TENANCY_SECRET_OCID USER_SECRET_OCID FINGERPRINT_SECRET_OCID API_SECRET_OCID COMPARTMENT_SECRET_OCID; do
-            if [ "${{ github.event.inputs.use_existing_instance }}" = "true" ]; then
-              if [ -z "$EXISTING_SSH_PRIVATE_KEY_OCID" ]; then
-                echo "Error: EXISTING_SSH_PRIVATE_KEY_OCID is unset when use_existing_instance=true" | tee -a "$LOG_FILE"
+            set -e
+            LOG_FILE="/tmp/cd3_setup_$(date +%F_%H-%M-%S).log"
+            export TENANCY_SECRET_OCID="$TENANCY_SECRET_OCID"
+            export USER_SECRET_OCID="$USER_SECRET_OCID"
+            export FINGERPRINT_SECRET_OCID="$FINGERPRINT_SECRET_OCID"
+            export API_SECRET_OCID="$API_SECRET_OCID"
+            export COMPARTMENT_SECRET_OCID="$COMPARTMENT_SECRET_OCID"
+            export EXISTING_SSH_PRIVATE_KEY_OCID="$EXISTING_SSH_PRIVATE_KEY_OCID"
+            
+            echo "Verifying secrets..." | tee -a "$LOG_FILE"
+            for VAR in TENANCY_SECRET_OCID USER_SECRET_OCID FINGERPRINT_SECRET_OCID API_SECRET_OCID COMPARTMENT_SECRET_OCID; do
+              if [ "${{ github.event.inputs.use_existing_instance }}" = "true" ]; then
+                if [ -z "$EXISTING_SSH_PRIVATE_KEY_OCID" ]; then
+                  echo "Error: EXISTING_SSH_PRIVATE_KEY_OCID is unset when use_existing_instance=true" | tee -a "$LOG_FILE"
+                  exit 1
+                fi
+              fi
+              if [ -z "${!VAR+x}" ]; then
+                echo "Error: $VAR is unset" | tee -a "$LOG_FILE"
                 exit 1
               fi
-            fi
-            if [ -z "${!VAR+x}" ]; then
-              echo "Error: $VAR is unset" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            if [ -z "${!VAR}" ]; then
-              echo "Error: $VAR is empty" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            echo "$VAR is set and non-empty" | tee -a "$LOG_FILE"
-            echo "::add-mask::${!VAR}"
-          done
-          TEMP_SECRET_FILE="/tmp/secret_temp_$(date +%F_%H-%M-%S).txt"
-          oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve TENANCY_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
-          tenancy_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
-          echo "::add-mask::$tenancy_ocid"
-          oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve USER_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
-          user_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
-          echo "::add-mask::$user_ocid"
-          oci secrets secret-bundle get --secret-id "$FINGERPRINT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve FINGERPRINT_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
-          fingerprint=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
-          echo "::add-mask::$fingerprint"
-          oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve COMPARTMENT_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
-          compartment_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
-          echo "::add-mask::$compartment_ocid"
-          oci secrets secret-bundle get --secret-id "$API_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode > /tmp/oci_api_private.pem 2>/dev/null || { echo "Error: Failed to retrieve API_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
-          chmod 600 /tmp/oci_api_private.pem 2>/dev/null
-          rm -f "$TEMP_SECRET_FILE" 2>/dev/null
-          for VALUE in "$tenancy_ocid" "$user_ocid" "$fingerprint" "$compartment_ocid"; do
-            if [ -z "$VALUE" ]; then
-              echo "Error: One or more secret values are empty after OCI Vault retrieval" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-          done
-          PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
-          REGION="us-phoenix-1"
-          AUTH_MECHANISM="api_key"
-          CONTAINER_NAME="cd3_toolkit"
-          OUTDIR_STRUCTURE_FILE="/cd3user/oci_tools/cd3_automation_toolkit/user-scripts/outdir_structure_file.properties"
-          TF_OR_TOFU="terraform"
-          CONFIG_FILE="/cd3user/oci_tools/cd3_automation_toolkit/user-scripts/tenancyconfig.properties"
-          KEY_DEST_PATH="/cd3user/tenancies/keys/oci_api_private.pem"
-          cat << EOF > /tmp/tenancyconfig.properties 2>/dev/null
-          [Default]
-          prefix=$PREFIX
-          tenancy_ocid=$tenancy_ocid
-          region=$REGION
-          auth_mechanism=$AUTH_MECHANISM
-          user_ocid=$user_ocid
-          key_path=$KEY_DEST_PATH
-          fingerprint=$fingerprint
-          compartment_ocid=$compartment_ocid
-          outdir_structure_file=$OUTDIR_STRUCTURE_FILE
-          tf_or_tofu=$TF_OR_TOFU
-          use_remote_state=yes
-          use_oci_devops_git=yes
-          remote_state_bucket_name=
-          oci_devops_git_repo_name=
-          oci_devops_git_user=
-          oci_devops_git_key=
-          ssh_public_key=
-          EOF
-          chmod 600 /tmp/tenancyconfig.properties 2>/dev/null
-          echo "Checking container status..." | tee -a "$LOG_FILE"
-          for attempt in {1..6}; do
-            CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman ps -q -f name=$CONTAINER_NAME" 2>>"$LOG_FILE")
-            if [ -n "$CONTAINER_ID" ]; then
-              echo "Found running container '$CONTAINER_NAME' with ID: [masked]" | tee -a "$LOG_FILE"
-              break
-            fi
-            echo "Container check attempt $attempt/6 failed, checking stopped containers..." | tee -a "$LOG_FILE"
-            STOPPED_CONTAINER=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman ps -a -q -f name=$CONTAINER_NAME" 2>>"$LOG_FILE")
-            if [ -n "$STOPPED_CONTAINER" ]; then
-              echo "Starting stopped container '$CONTAINER_NAME'..." | tee -a "$LOG_FILE"
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman start $CONTAINER_NAME" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to start container" | tee -a "$LOG_FILE"; exit 1; }
-              sleep 10
+              if [ -z "${!VAR}" ]; then
+                echo "Error: $VAR is empty" | tee -a "$LOG_FILE"
+                exit 1
+              fi
+              echo "$VAR is set and non-empty" | tee -a "$LOG_FILE"
+              echo "::add-mask::${!VAR}"
+            done
+            
+            TEMP_SECRET_FILE="/tmp/secret_temp_$(date +%F_%H-%M-%S).txt"
+            oci secrets secret-bundle get --secret-id "$TENANCY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve TENANCY_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
+            tenancy_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
+            echo "::add-mask::$tenancy_ocid"
+            oci secrets secret-bundle get --secret-id "$USER_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve USER_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
+            user_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
+            echo "::add-mask::$user_ocid"
+            oci secrets secret-bundle get --secret-id "$FINGERPRINT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve FINGERPRINT_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
+            fingerprint=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
+            echo "::add-mask::$fingerprint"
+            oci secrets secret-bundle get --secret-id "$COMPARTMENT_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>/dev/null || { echo "Error: Failed to retrieve COMPARTMENT_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
+            compartment_ocid=$(base64 --decode "$TEMP_SECRET_FILE" 2>/dev/null)
+            echo "::add-mask::$compartment_ocid"
+            oci secrets secret-bundle get --secret-id "$API_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output | base64 --decode > /tmp/oci_api_private.pem 2>/dev/null || { echo "Error: Failed to retrieve API_SECRET_OCID from OCI Vault" | tee -a "$LOG_FILE"; exit 1; }
+            chmod 600 /tmp/oci_api_private.pem 2>/dev/null
+            rm -f "$TEMP_SECRET_FILE" 2>/dev/null
+            for VALUE in "$tenancy_ocid" "$user_ocid" "$fingerprint" "$compartment_ocid"; do
+              if [ -z "$VALUE" ]; then
+                echo "Error: One or more secret values are empty after OCI Vault retrieval" | tee -a "$LOG_FILE"
+                exit 1
+              fi
+            done
+            PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+            REGION="us-phoenix-1"
+            AUTH_MECHANISM="api_key"
+            CONTAINER_NAME="cd3_toolkit"
+            OUTDIR_STRUCTURE_FILE="/cd3user/oci_tools/cd3_automation_toolkit/user-scripts/outdir_structure_file.properties"
+            TF_OR_TOFU="terraform"
+            CONFIG_FILE="/cd3user/oci_tools/cd3_automation_toolkit/user-scripts/tenancyconfig.properties"
+            KEY_DEST_PATH="/cd3user/tenancies/keys/oci_api_private.pem"
+            cat << EOF > /tmp/tenancyconfig.properties 2>/dev/null
+            [Default]
+            prefix=$PREFIX
+            tenancy_ocid=$tenancy_ocid
+            region=$REGION
+            auth_mechanism=$AUTH_MECHANISM
+            user_ocid=$user_ocid
+            key_path=$KEY_DEST_PATH
+            fingerprint=$fingerprint
+            compartment_ocid=$compartment_ocid
+            outdir_structure_file=$OUTDIR_STRUCTURE_FILE
+            tf_or_tofu=$TF_OR_TOFU
+            use_remote_state=yes
+            use_oci_devops_git=yes
+            remote_state_bucket_name=
+            oci_devops_git_repo_name=
+            oci_devops_git_user=
+            oci_devops_git_key=
+            ssh_public_key=
+            EOF
+            chmod 600 /tmp/tenancyconfig.properties 2>/dev/null
+            echo "Checking container status..." | tee -a "$LOG_FILE"
+            for attempt in {1..6}; do
               CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman ps -q -f name=$CONTAINER_NAME" 2>>"$LOG_FILE")
               if [ -n "$CONTAINER_ID" ]; then
-                echo "Container '$CONTAINER_NAME' started successfully with ID: [masked]" | tee -a "$LOG_FILE"
+                echo "Found running container '$CONTAINER_NAME' with ID: [masked]" | tee -a "$LOG_FILE"
                 break
               fi
-            fi
-            echo "No container found, retrying in 60 seconds..." | tee -a "$LOG_FILE"
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman ps -a" >> "$LOG_FILE" 2>&1
-            sleep 60
-            if [ $attempt -eq 6 ]; then
-              echo "Error: Container '$CONTAINER_NAME' not found or not running on ${{ env.INSTANCE_IP }} after 6 attempts" | tee -a "$LOG_FILE"
-              cat "$LOG_FILE"
-              exit 1
-            fi
-          done
-          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_api_private.pem opc@${{ env.INSTANCE_IP }}:/tmp/oci_api_private.pem 2>>"$LOG_FILE" || { echo "Error: Failed to SCP private key" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID mkdir -p /cd3user/tenancies/keys" 2>>"$LOG_FILE" || { echo "Error: Failed to create directory in container" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/oci_api_private.pem $CONTAINER_ID:$KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy private key to container" | tee -a "$LOG_FILE"; ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID ls -ld /cd3user/tenancies/keys" >> "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID chmod 600 $KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on private key" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/oci_api_private.pem" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary private key" | tee -a "$LOG_FILE"; exit 1; }
-          echo "API private key copied to container" | tee -a "$LOG_FILE"
-          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/tenancyconfig.properties opc@${{ env.INSTANCE_IP }}:/tmp/tenancyconfig.properties 2>>"$LOG_FILE" || { echo "Error: Failed to SCP tenancy config" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/tenancyconfig.properties $CONTAINER_ID:$CONFIG_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to copy tenancy config to container" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/tenancyconfig.properties" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary tenancy config" | tee -a "$LOG_FILE"; exit 1; }
-          echo "tenancyconfig.properties copied to container" | tee -a "$LOG_FILE"
-          echo "Checking Python in container..." | tee -a "$LOG_FILE"
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID bash -c 'command -v python3 >/dev/null || { echo \"Error: python3 not found in container\" >> $LOG_FILE; exit 1; }'" 2>>"$LOG_FILE" || { echo "Error: Python3 check failed in container" | tee -a "$LOG_FILE"; exit 1; }
-          echo "Running createTenancyConfig.py..." | tee -a "$LOG_FILE"
-          for i in {1..8}; do
-            if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID bash -c 'sudo ln -sf /usr/bin/python3 /usr/bin/python && cd /cd3user/oci_tools/cd3_automation_toolkit/user-scripts/ && python createTenancyConfig.py tenancyconfig.properties'" >> "$LOG_FILE" 2>&1; then
-              echo "Environment initialization completed successfully" | tee -a "$LOG_FILE"
-              break
-            else
-              echo "Retrying ($i/8) after 60 seconds due to potential API key propagation delay..." | tee -a "$LOG_FILE"
+              echo "Container check attempt $attempt/6 failed, checking stopped containers..." | tee -a "$LOG_FILE"
+              STOPPED_CONTAINER=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman ps -a -q -f name=$CONTAINER_NAME" 2>>"$LOG_FILE")
+              if [ -n "$STOPPED_CONTAINER" ]; then
+                echo "Starting stopped container '$CONTAINER_NAME'..." | tee -a "$LOG_FILE"
+                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman start $CONTAINER_NAME" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to start container" | tee -a "$LOG_FILE"; exit 1; }
+                sleep 10
+                CONTAINER_ID=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman ps -q -f name=$CONTAINER_NAME" 2>>"$LOG_FILE")
+                if [ -n "$CONTAINER_ID" ]; then
+                  echo "Container '$CONTAINER_NAME' started successfully with ID: [masked]" | tee -a "$LOG_FILE"
+                  break
+                fi
+              fi
+              echo "No container found, retrying in 60 seconds..." | tee -a "$LOG_FILE"
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman ps -a" >> "$LOG_FILE" 2>&1
               sleep 60
+              if [ $attempt -eq 6 ]; then
+                echo "Error: Container '$CONTAINER_NAME' not found or not running on ${{ env.INSTANCE_IP }} after 6 attempts" | tee -a "$LOG_FILE"
+                cat "$LOG_FILE"
+                exit 1
+              fi
+            done
+            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/oci_api_private.pem opc@${{ env.INSTANCE_IP }}:/tmp/oci_api_private.pem 2>>"$LOG_FILE" || { echo "Error: Failed to SCP private key" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID mkdir -p /cd3user/tenancies/keys" 2>>"$LOG_FILE" || { echo "Error: Failed to create directory in container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/oci_api_private.pem $CONTAINER_ID:$KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy private key to container" | tee -a "$LOG_FILE"; ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID ls -ld /cd3user/tenancies/keys" >> "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID chmod 600 $KEY_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on private key" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/oci_api_private.pem" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary private key" | tee -a "$LOG_FILE"; exit 1; }
+            echo "API private key copied to container" | tee -a "$LOG_FILE"
+            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no /tmp/tenancyconfig.properties opc@${{ env.INSTANCE_IP }}:/tmp/tenancyconfig.properties 2>>"$LOG_FILE" || { echo "Error: Failed to SCP tenancy config" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/tenancyconfig.properties $CONTAINER_ID:$CONFIG_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to copy tenancy config to container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/tenancyconfig.properties" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary tenancy config" | tee -a "$LOG_FILE"; exit 1; }
+            echo "tenancyconfig.properties copied to container" | tee -a "$LOG_FILE"
+            echo "Checking Python in container..." | tee -a "$LOG_FILE"
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID bash -c 'command -v python3 >/dev/null || { echo \"Error: python3 not found in container\" >> $LOG_FILE; exit 1; }'" 2>>"$LOG_FILE" || { echo "Error: Python3 check failed in container" | tee -a "$LOG_FILE"; exit 1; }
+            echo "Running createTenancyConfig.py..." | tee -a "$LOG_FILE"
+            for i in {1..8}; do
+              if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID bash -c 'sudo ln -sf /usr/bin/python3 /usr/bin/python && cd /cd3user/oci_tools/cd3_automation_toolkit/user-scripts/ && python createTenancyConfig.py tenancyconfig.properties'" >> "$LOG_FILE" 2>&1; then
+                echo "Environment initialization completed successfully" | tee -a "$LOG_FILE"
+                break
+              else
+                echo "Retrying ($i/8) after 60 seconds due to potential API key propagation delay..." | tee -a "$LOG_FILE"
+                sleep 60
+              fi
+              if [ $i -eq 8 ]; then
+                echo "Error: Initialization failed after 8 attempts" | tee -a "$LOG_FILE"
+                cat "$LOG_FILE"
+                exit 1
+              fi
+            done
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID ls -l /cd3user/tenancies/$PREFIX/" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list output directory" | tee -a "$LOG_FILE"; exit 1; }
+            echo "Starting Jenkins in container..." | tee -a "$LOG_FILE"
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID bash -c 'nohup /usr/share/jenkins/jenkins.sh > /cd3user/jenkins.log 2>&1 & sleep 20; ps aux | grep -q \"[j]enkins\" || { echo \"Jenkins failed to start\"; exit 1; }'" 2>>"$LOG_FILE" || { echo "Error: Failed to start Jenkins" | tee -a "$LOG_FILE"; exit 1; }
+            echo "Jenkins started in container" | tee -a "$LOG_FILE"
+            PUBLIC_IP="${{ github.event.inputs.use_existing_instance == 'true' && github.event.inputs.public_ip || needs.Deploy_RM_Stack.outputs.public_ip }}"
+            if [ -n "$PUBLIC_IP" ] && [ "$PUBLIC_IP" != "null" ]; then
+              echo "Access Jenkins at https://$PUBLIC_IP:8443" | tee -a "$LOG_FILE"
+            else
+              echo "Access Jenkins at https://<public-ip>:8443" | tee -a "$LOG_FILE"
             fi
-            if [ $i -eq 8 ]; then
-              echo "Error: Initialization failed after 8 attempts" | tee -a "$LOG_FILE"
-              cat "$LOG_FILE"
-              exit 1
-            fi
-          done
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID ls -l /cd3user/tenancies/$PREFIX/" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list output directory" | tee -a "$LOG_FILE"; exit 1; }
-          echo "Starting Jenkins in container..." | tee -a "$LOG_FILE"
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_ID bash -c 'nohup /usr/share/jenkins/jenkins.sh > /cd3user/jenkins.log 2>&1 & sleep 20; ps aux | grep -q \"[j]enkins\" || { echo \"Jenkins failed to start\"; exit 1; }'" 2>>"$LOG_FILE" || { echo "Error: Failed to start Jenkins" | tee -a "$LOG_FILE"; exit 1; }
-          echo "Jenkins started in container" | tee -a "$LOG_FILE"
-          PUBLIC_IP="${{ env.PUBLIC_IP }}"
-          if [ -n "$PUBLIC_IP" ] && [ "$PUBLIC_IP" != "null" ]; then
-            echo "Access Jenkins at https://$PUBLIC_IP:8443" | tee -a "$LOG_FILE"
-          else
-            echo "Access Jenkins at https://<public-ip>:8443" | tee -a "$LOG_FILE"
-          fi
-          echo "Setup complete. Output files logged to $LOG_FILE" | tee -a "$LOG_FILE"
-          rm -f /tmp/oci_api_private.pem /tmp/tenancyconfig.properties 2>/dev/null
-          echo "Cleaned up temporary files" >> "$LOG_FILE"
+            echo "Setup complete. Output files logged to $LOG_FILE" | tee -a "$LOG_FILE"
+                
+                rm -f /tmp/oci_api_private.pem /tmp/tenancyconfig.properties 2>/dev/null
+                echo "Cleaned up temporary files" >> "$LOG_FILE"
+          
+      #Changes for running the workflow
       - name: Copy Excel File and Config.yaml to Instance
         run: |
           LOG_FILE="/tmp/cd3_copy_files_$(date +%F_%H-%M-%S).log"
@@ -760,6 +778,7 @@ jobs:
           ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/config.yaml $CONTAINER_NAME:$CONFIG_DEST_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy config file to container" | tee -a "$LOG_FILE"; exit 1; }
           ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm /tmp/CD3-Blank-template.xlsx /tmp/config.yaml" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary files" | tee -a "$LOG_FILE"; exit 1; }
           echo "Excel and config.yaml copied to container at $EXCEL_DEST_PATH and $CONFIG_DEST_PATH" | tee -a "$LOG_FILE"
+
       - name: Create setUpOCI Properties File
         env:
           TENANCY_SECRET_OCID: ${{ secrets.TENANCY_SECRET_OCID }}
@@ -838,9 +857,9 @@ jobs:
           region=$OCI_REGION
           key_file=$KEY_DEST_PATH
           EOF
-          chmod 600 /tmp/oci_config 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on oci_config" | tee -a "$LOG_FILE"; exit 1; }
-          # Create properties file
-          cat << EOF > /tmp/${PREFIX}_setUpOCI.properties
+              chmod 600 /tmp/oci_config 2>>"$LOG_FILE" || { echo "Error: Failed to set permissions on oci_config" | tee -a "$LOG_FILE"; exit 1; }
+              # Create properties file
+              cat << EOF > /tmp/${PREFIX}_setUpOCI.properties
           [Default]
           workflow_type=$WF_TYPE
           cd3file=/cd3user/tenancies/$PREFIX/cd3_files/CD3-Blank-template.xlsx
@@ -881,6 +900,7 @@ jobs:
           echo "Properties file copied to $PROPERTIES_DEST_PATH" | tee -a "$LOG_FILE"
           echo "OCI config file copied to $OCI_CONFIG_DEST_PATH" | tee -a "$LOG_FILE"
           echo "setUpOCI properties file created successfully" | tee -a "$LOG_FILE"
+
       - name: Validate config.yaml and Generate service_options.json
         run: |
           LOG_FILE="/tmp/validate_config_$(date +%F_%H-%M-%S).log"
@@ -931,9 +951,9 @@ jobs:
                 tags: [str]
               operations: [{main_option: str, sub_options: [str], sub_child_options: [[str]]}]
           EOF
-          # Create validate_config.py
-          echo "Creating validate_config.py" | tee -a "$LOG_FILE"
-          cat << EOF > validate_config.py
+              # Create validate_config.py
+              echo "Creating validate_config.py" | tee -a "$LOG_FILE"
+              cat << EOF > validate_config.py
           import yaml
           from schema import Schema, Optional, SchemaError
           try:
@@ -1034,4 +1054,379 @@ jobs:
           ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 $VALIDATE_SCRIPT" >>"$LOG_FILE" 2>&1 || { echo "Error: Config validation failed" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
           # Generate service_options.json
           echo "Generating service_options.json in container" | tee -a "$LOG_FILE"
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 $GENERATE_SCRIPT $WF_TYPE" >>"$LOG_FILE" 2>&1 || { echo "Error: Failed to generate service_options.json" | tee -a "$LOG_FILE"; cat "$LOG_FILE";
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 $GENERATE_SCRIPT $WF_TYPE" >>"$LOG_FILE" 2>&1 || { echo "Error: Failed to generate service_options.json" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+          # Copy service_options.json back to instance and runner
+          echo "Copying service_options.json from container to instance" | tee -a "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp $CONTAINER_NAME:$SERVICE_JSON_PATH /tmp/service_options.json" 2>>"$LOG_FILE" || { echo "Error: Failed to copy service_options.json from container" | tee -a "$LOG_FILE"; exit 1; }
+          echo "Copying service_options.json to runner" | tee -a "$LOG_FILE"
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }}:/tmp/service_options.json /tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to SCP service_options.json to runner" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/service_options.json" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary service_options.json from instance" | tee -a "$LOG_FILE"
+          echo "Generated service_options.json:" | tee -a "$LOG_FILE"
+          cat /tmp/service_options.json >> "$LOG_FILE"
+
+      - name: Run Workflow with Validation
+        if: steps.validate_workflow.outputs.create_resources_enabled == 'true'
+        run: |
+          LOG_FILE="/tmp/cd3_workflow_$(date +%F_%H-%M-%S).log"
+          CONTAINER_NAME="cd3_toolkit"
+          PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+          PROPERTIES_PATH="/cd3user/tenancies/$PREFIX/config/${PREFIX}_setUpOCI.properties"
+          SERVICE_JSON_PATH="/tmp/service_options.json"
+          VALIDATE_SCRIPT="/tmp/get_validate_cd3.py"
+          if [ ! -f /tmp/service_options.json ]; then
+            echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+          echo "Contents of /tmp/service_options.json:" | tee -a "$LOG_FILE"
+          cat /tmp/service_options.json >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to read /tmp/service_options.json" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/service_options.json $CONTAINER_NAME:$SERVICE_JSON_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy service_options.json to container" | tee -a "$LOG_FILE"; exit 1; }
+          WF_TYPE=$(grep "workflow_type" /tmp/${PREFIX}_setUpOCI.properties | cut -d= -f2)
+          if [ -z "$WF_TYPE" ]; then
+            echo "Error: Workflow type not found in setUpOCI.properties" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+          echo "Workflow type: $WF_TYPE" | tee -a "$LOG_FILE"
+          # Check properties file and setUpOCI.py in container
+          echo "Checking properties file and setUpOCI.py in container" | tee -a "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME ls $PROPERTIES_PATH" >>"$LOG_FILE" 2>&1 || { echo "Error: Properties file $PROPERTIES_PATH not found in container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME ls /cd3user/oci_tools/cd3_automation_toolkit/setUpOCI.py" >>"$LOG_FILE" 2>&1 || { echo "Error: setUpOCI.py not found in container" | tee -a "$LOG_FILE"; exit 1; }
+          # Create and copy validate_cd3 script
+          echo "Creating validate_cd3 script" | tee -a "$LOG_FILE"
+          cat << EOF > get_validate_cd3.py
+          import yaml
+          import sys
+          try:
+              wf_type = sys.argv[1]
+              with open('/tmp/config.yaml') as f:
+                  config = yaml.safe_load(f)
+              validate_cd3 = config['cd3_workflows'][wf_type]['validate_cd3']
+              print(str(validate_cd3).lower())
+          except yaml.YAMLError as e:
+              print(f'Invalid YAML in config.yaml: {str(e)}')
+              sys.exit(1)
+          except FileNotFoundError as e:
+              print(f'File not found: {str(e)}')
+              sys.exit(1)
+          except KeyError as e:
+              print(f'Missing key in config.yaml: {str(e)}')
+              sys.exit(1)
+          except Exception as e:
+              print(f'Unexpected error: {str(e)}')
+              sys.exit(1)
+          EOF
+          echo "Copying validate_cd3 script to instance" | tee -a "$LOG_FILE"
+          scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no get_validate_cd3.py opc@${{ env.INSTANCE_IP }}:/tmp/get_validate_cd3.py 2>>"$LOG_FILE" || { echo "Error: Failed to SCP validate_cd3 script to instance" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp /tmp/get_validate_cd3.py $CONTAINER_NAME:$VALIDATE_SCRIPT" 2>>"$LOG_FILE" || { echo "Error: Failed to copy validate_cd3 script to container" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/get_validate_cd3.py" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary validate_cd3 script from instance" | tee -a "$LOG_FILE"
+          # Run validate_cd3 script
+          echo "Reading validate_cd3 from config.yaml" | tee -a "$LOG_FILE"
+          VALIDATE=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME python3 $VALIDATE_SCRIPT $WF_TYPE") 2>>"$LOG_FILE" || { echo "Error: Failed to read validate_cd3 from config.yaml" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+          echo "Validate CD3: $VALIDATE" | tee -a "$LOG_FILE"
+          if [ "$VALIDATE" = "true" ]; then
+            echo "Running Validate CD3 for $WF_TYPE..." | tee -a "$LOG_FILE"
+            jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
+              echo "Validating main_option: $main_option" | tee -a "$LOG_FILE"
+              VALIDATE_SUB_OPTION="Validate $main_option"
+              CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --main_options=\"Validate\" --sub_options=\"$VALIDATE_SUB_OPTION\""
+              echo "Executing: $CMD" | tee -a "$LOG_FILE"
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Validation failed for $main_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+            done
+          fi
+          jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
+            echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
+            # Check if main_option value is an array or object
+            IS_ARRAY=$(jq -r --arg key "$main_option" '.[$key] | if type == "array" then "true" else "false" end' /tmp/service_options.json 2>>"$LOG_FILE")
+            if [ $? -ne 0 ]; then
+              echo "Error: Failed to check type for $main_option in /tmp/service_options.json" | tee -a "$LOG_FILE"
+              cat /tmp/service_options.json >> "$LOG_FILE"
+              exit 1
+            fi
+            if [ "$IS_ARRAY" = "true" ]; then
+              SUB_OPTIONS=$(jq -r --arg key "$main_option" '.[$key][]' /tmp/service_options.json 2>>"$LOG_FILE" | tr '\n' ',' | sed 's/,$//')
+              if [ $? -ne 0 ]; then
+                echo "Error: Failed to extract sub-options for $main_option" | tee -a "$LOG_FILE"
+                cat /tmp/service_options.json >> "$LOG_FILE"
+                exit 1
+              fi
+              if [ -z "$SUB_OPTIONS" ]; then
+                echo "Warning: No sub-options defined for $main_option, skipping" | tee -a "$LOG_FILE"
+                continue
+              fi
+              echo "Sub-options for $main_option: $SUB_OPTIONS" | tee -a "$LOG_FILE"
+              CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=true --main_options=$main_option --sub_options=\"$SUB_OPTIONS\""
+              echo "Executing: $CMD" | tee -a "$LOG_FILE"
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run workflow for $main_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+            else
+              # Handle object with sub_options and sub_child_options
+              jq -r --arg key "$main_option" '.[$key] | to_entries[] | .key' /tmp/service_options.json 2>>"$LOG_FILE" | while read -r sub_option; do
+                echo "Processing sub_option: $sub_option for $main_option" | tee -a "$LOG_FILE"
+                SUB_CHILD_OPTIONS=$(jq -r --arg key "$main_option" --arg subkey "$sub_option" '.[$key][$subkey][]' /tmp/service_options.json 2>>"$LOG_FILE" | tr '\n' ',' | sed 's/,$//')
+                if [ $? -ne 0 ]; then
+                  echo "Error: Failed to extract sub-child-options for $main_option:$sub_option" | tee -a "$LOG_FILE"
+                  cat /tmp/service_options.json >> "$LOG_FILE"
+                  exit 1
+                fi
+                echo "Sub-child-options for $main_option:$sub_option: $SUB_CHILD_OPTIONS" | tee -a "$LOG_FILE"
+                CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=true --main_options=\"$main_option\" --sub_options=\"$sub_option\""
+                if [ -n "$SUB_CHILD_OPTIONS" ]; then
+                  CMD="$CMD --sub_child_options=\"$SUB_CHILD_OPTIONS\""
+                fi
+                echo "Executing: $CMD" | tee -a "$LOG_FILE"
+                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run workflow for $main_option:$sub_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+              done
+            fi
+            echo "Workflow completed for $main_option" | tee -a "$LOG_FILE"
+          done
+          echo "Workflow completed successfully" | tee -a "$LOG_FILE"
+
+
+      - name: Run setUpOCI for Export Workflow
+        if: steps.validate_workflow.outputs.export_resources_enabled == 'true'
+        run: |
+          LOG_FILE="/tmp/cd3_run_export_$(date +%F_%H-%M-%S).log"
+          CONTAINER_NAME="cd3_toolkit"
+          PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+          PROPERTIES_PATH="/cd3user/tenancies/$PREFIX/config/${PREFIX}_setUpOCI.properties"
+          CONFIG_PATH="/tmp/config.yaml"
+          echo "Starting setUpOCI export workflow at $(date)" | tee -a "$LOG_FILE"
+          if [ ! -f "config.yaml" ]; then
+            echo "Error: config.yaml not found in repository" | tee -a "$LOG_FILE"
+            exit 1
+          fi
+          WF_TYPE="${{ steps.validate_workflow.outputs.workflow_type }}"
+          if [ "$WF_TYPE" != "export_resources" ]; then
+            echo "Skipping export workflow as workflow_type is $WF_TYPE" | tee -a "$LOG_FILE"
+            exit 0
+          fi
+          echo "Workflow type: $WF_TYPE" | tee -a "$LOG_FILE"
+          REGIONS=$(yq e '.cd3_workflows.export_resources.filters.regions | join(",")' config.yaml)
+          COMPARTMENT_IDS=$(yq e '.cd3_workflows.export_resources.filters.compartment_ids | join(",")' config.yaml)
+          TAGS=$(yq e '.cd3_workflows.export_resources.filters.tags | join(",")' config.yaml)
+          CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH  --devops=true"
+          if [ -n "$REGIONS" ]; then
+            CMD="$CMD --regions $REGIONS"
+          fi
+          if [ -n "$COMPARTMENT_IDS" ]; then
+            CMD="$CMD --compartment_ids $COMPARTMENT_IDS"
+          fi
+          if [ -n "$TAGS" ]; then
+            CMD="$CMD --tags $TAGS"
+          fi
+          echo "Executing: $CMD" | tee -a "$LOG_FILE"
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >>"$LOG_FILE" 2>&1 || { echo "Error: Failed to run setUpOCI for export_resources" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+          echo "setUpOCI export workflow completed successfully" | tee -a "$LOG_FILE"
+
+      - name: Retrieve Exported Files
+        if: steps.validate_workflow.outputs.export_resources_enabled == 'true'
+        run: |
+          LOG_FILE="/tmp/cd3_retrieve_files_$(date +%F_%H-%M-%S).log"
+          touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
+          echo "Starting Retrieve Exported Files step at $(date)" | tee -a "$LOG_FILE"
+          PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+          CONTAINER_NAME="cd3_toolkit"
+          WF_TYPE=$(grep "workflow_type" /tmp/${PREFIX}_setUpOCI.properties | cut -d= -f2)
+          if [ "$WF_TYPE" != "export_resources" ]; then
+            echo "Skipping file retrieval for workflow_type=$WF_TYPE" | tee -a "$LOG_FILE"
+            exit 0
+          fi
+          EXPORTED_DIR="/cd3user/tenancies/$PREFIX/cd3_files"
+          LOCAL_DIR="/tmp/exported_files"
+          mkdir -p "$LOCAL_DIR" 2>>"$LOG_FILE" || { echo "Error: Failed to create local directory $LOCAL_DIR" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp $CONTAINER_NAME:$EXPORTED_DIR /tmp/exported_files" 2>>"$LOG_FILE" || { echo "Error: Failed to copy exported files from container" | tee -a "$LOG_FILE"; exit 1; }
+          scp -r -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }}:/tmp/exported_files/* "$LOCAL_DIR" 2>>"$LOG_FILE" || { echo "Error: Failed to SCP exported files to runner" | tee -a "$LOG_FILE"; exit 1; }
+          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -rf /tmp/exported_files" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary exported files" | tee -a "$LOG_FILE"; exit 1; }
+          echo "Exported files retrieved to $LOCAL_DIR:" | tee -a "$LOG_FILE"
+          ls -l "$LOCAL_DIR" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list exported files" | tee -a "$LOG_FILE"; exit 1; }
+          echo "Retrieve Exported Files completed successfully" | tee -a "$LOG_FILE"
+
+      - name: Apply Terraform Configurations for Services
+        if: always()
+        run: |
+            # Set environment variables
+            LOG_FILE="/tmp/cd3_terraform_apply_$(date +%F_%H-%M-%S).log"
+            touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
+            echo "Starting Apply Terraform Configurations step at $(date)" | tee -a "$LOG_FILE"
+            PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+            CONTAINER_NAME="cd3_toolkit"
+            REGION="${{ github.event.inputs.region || 'us-phoenix-1' }}"
+            OUTDIR_STRUCTURE_FILE="/cd3user/tenancies/$PREFIX/${PREFIX}_outdir_structure_file.properties"
+            OCI_REGIONS_FILE="/cd3user/oci_tools/cd3_automation_toolkit/OCI_Regions"
+        
+            # Get workflow type
+            WF_TYPE=$(grep "workflow_type" /tmp/${PREFIX}_setUpOCI.properties | cut -d= -f2 | tr -d '[:space:]')
+            if [ -z "$WF_TYPE" ]; then
+              echo "Error: Workflow type not set in properties file" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+            echo "Workflow type: $WF_TYPE" | tee -a "$LOG_FILE"
+        
+            # Validate INSTANCE_IP
+            if [ -z "${{ env.INSTANCE_IP }}" ]; then
+              echo "Error: INSTANCE_IP is empty" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+        
+            # Get short region key
+            SHORT_REGION=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OCI_REGIONS_FILE | grep \":$REGION\" | cut -d: -f1'") 2>>"$LOG_FILE"
+            if [ -z "$SHORT_REGION" ]; then
+              echo "Error: Failed to find short region key for $REGION in $OCI_REGIONS_FILE" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+            echo "Mapped region $REGION to short key $SHORT_REGION" | tee -a "$LOG_FILE"
+        
+            # Validate service_options.json
+            if [ ! -f /tmp/service_options.json ]; then
+              echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
+              exit 1
+            fi
+        
+            # Check if outdir_structure_file.properties exists
+            USE_OUTDIR_STRUCTURE=false
+            if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME test -f $OUTDIR_STRUCTURE_FILE" 2>>"$LOG_FILE"; then
+              USE_OUTDIR_STRUCTURE=true
+              echo "Outdir structure enabled: true" | tee -a "$LOG_FILE"
+            else
+              echo "Outdir structure enabled: false" | tee -a "$LOG_FILE"
+            fi
+        
+        
+            # Create directory for Terraform plans
+            mkdir -p /tmp/terraform_plans || { echo "Error: Failed to create /tmp/terraform_plans" | tee -a "$LOG_FILE"; exit 1; }
+        
+            # Define mapping from main_option to OCI Service Name
+            declare -A MAIN_OPTION_TO_SERVICE
+            MAIN_OPTION_TO_SERVICE["CD3 Services"]="identity"
+            MAIN_OPTION_TO_SERVICE["Export Compute"]="instance"
+            MAIN_OPTION_TO_SERVICE["Export Identity"]="identity"
+            MAIN_OPTION_TO_SERVICE["Export Governance"]="tagging"
+            MAIN_OPTION_TO_SERVICE["Export Cost Management"]="budget"
+            MAIN_OPTION_TO_SERVICE["Export Network"]="network"
+            MAIN_OPTION_TO_SERVICE["Export OCI Firewall"]="firewall"
+            MAIN_OPTION_TO_SERVICE["Export DNS Management"]="dns"
+            MAIN_OPTION_TO_SERVICE["Export Storage"]="block_volume"
+            MAIN_OPTION_TO_SERVICE["Export Databases"]="dbsystem_vm_bm"
+            MAIN_OPTION_TO_SERVICE["Export Load Balancers"]="loadbalancer"
+            MAIN_OPTION_TO_SERVICE["Export Management Services"]="managementservices"
+            MAIN_OPTION_TO_SERVICE["Export Developer Services"]="oke"
+            MAIN_OPTION_TO_SERVICE["Export Security"]="kms"
+            MAIN_OPTION_TO_SERVICE["Export Software-Defined Data Centers - OCVS"]="sddc"
+        
+            # Process each main_option from service_options.json
+            jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
+              echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
+        
+              # Map main_option to OCI Service Name
+              SERVICE_NAME="${MAIN_OPTION_TO_SERVICE[$main_option]}"
+              if [ -z "$SERVICE_NAME" ]; then
+                echo "Warning: No service mapping found for $main_option in MAIN_OPTION_TO_SERVICE, skipping" | tee -a "$LOG_FILE"
+                continue
+              fi
+              echo "Mapped main_option $main_option to OCI Service Name $SERVICE_NAME" | tee -a "$LOG_FILE"
+        
+              # Get service directory
+              if [ "$USE_OUTDIR_STRUCTURE" = true ]; then
+                SERVICE_DIR=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OUTDIR_STRUCTURE_FILE | grep -i \"^$SERVICE_NAME=\" | cut -d= -f2'") 2>>"$LOG_FILE"
+                if [ -z "$SERVICE_DIR" ]; then
+                  echo "Warning: No directory mapping found for $SERVICE_NAME in $OUTDIR_STRUCTURE_FILE, skipping $main_option" | tee -a "$LOG_FILE"
+                  continue
+                fi
+                echo "Mapped $SERVICE_NAME to directory $SERVICE_DIR" | tee -a "$LOG_FILE"
+                TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION/$SERVICE_DIR"
+              else
+                TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION"
+              fi
+        
+        
+              # Check if TF_DIR exists
+              if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
+                echo "Warning: Directory $TF_DIR does not exist, skipping $main_option" | tee -a "$LOG_FILE"
+                continue
+              fi
+        
+              # Find latest .tfvars file
+              LATEST_TFVARS=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'ls -t $TF_DIR/*.tfvars 2>/dev/null | head -n 1'") 2>>"$LOG_FILE"
+              if [ -z "$LATEST_TFVARS" ]; then
+                echo "Warning: No .tfvars files found in $TF_DIR, skipping $main_option" | tee -a "$LOG_FILE"
+                continue
+              fi
+              echo "Latest .tfvars file: $LATEST_TFVARS" | tee -a "$LOG_FILE"
+        
+              # Check if .tfvars file is recent (within 1 hour)
+              if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'find $LATEST_TFVARS -mmin -60'" 2>>"$LOG_FILE"; then
+                echo "Warning: $LATEST_TFVARS is older than 1 hour, skipping $main_option" | tee -a "$LOG_FILE"
+                continue
+              fi
+        
+              # Set Terraform commands based on WF_TYPE
+              if [ "$WF_TYPE" = "export_resources" ]; then
+                COMMANDS=("init" "plan -var-file=$LATEST_TFVARS -out=tfplan")
+              else
+                COMMANDS=("init" "plan -var-file=$LATEST_TFVARS -out=tfplan" "apply tfplan")
+              fi
+        
+              # Execute Terraform commands with retries
+              for cmd in "${COMMANDS[@]}"; do
+                RETRY_COUNT=0
+                MAX_RETRIES=3
+                until ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform $cmd'" >> "$LOG_FILE" 2>&1; do
+                  RETRY_COUNT=$((RETRY_COUNT + 1))
+                  if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                    echo "Error: Terraform $cmd failed for $main_option after $MAX_RETRIES retries, continuing" | tee -a "$LOG_FILE"
+                    break
+                  fi
+                  echo "Retrying terraform $cmd for $main_option (attempt $((RETRY_COUNT + 1)))" | tee -a "$LOG_FILE"
+                  sleep 120
+                done
+                if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                  break
+                fi
+                if [ "$cmd" = "plan -var-file=$LATEST_TFVARS -out=tfplan" ] && [ "$WF_TYPE" = "export_resources" ]; then
+                  PLAN_FILE="/tmp/terraform_plans/${main_option}_tfplan_$(date +%F_%H-%M-%S).txt"
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform show -no-color tfplan'" > "$PLAN_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to save terraform plan for $main_option" | tee -a "$LOG_FILE"; exit 1; }
+                  echo "Terraform plan saved to $PLAN_FILE for $main_option" | tee -a "$LOG_FILE"
+                fi
+              done
+              if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                continue
+              fi
+              if [ "$WF_TYPE" = "create_resources" ]; then
+                echo "Terraform apply completed for $main_option" | tee -a "$LOG_FILE"
+              else
+                echo "Terraform plan completed for $main_option (export_resources mode)" | tee -a "$LOG_FILE"
+              fi
+            done
+            echo "Terraform configurations processed successfully" | tee -a "$LOG_FILE"
+
+      - name: Cleanup SSH Key
+        if: always()
+        run: |
+              LOG_FILE="/tmp/ssh_cleanup_$(date +%F_%H-%M-%S).log"
+              rm -f ~/.ssh/temp-id_rsa ~/.ssh/known_hosts 2>>"$LOG_FILE" || echo "Warning: Failed to remove SSH files" | tee -a "$LOG_FILE"
+              echo "SSH key cleanup completed" | tee -a "$LOG_FILE"            
+
+      - name: Cleanup Temporary Files
+        if: success()
+        run: |
+          LOG_FILE="/tmp/cd3_cleanup_$(date +%F_%H-%M-%S).log"
+          touch "$LOG_FILE" || { echo "Error: Failed to create cleanup log file" >&2; exit 1; }
+          echo "Starting cleanup at $(date)" | tee -a "$LOG_FILE"
+          rm -f /tmp/service_options.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options.json" | tee -a "$LOG_FILE"
+          rm -f /tmp/service_options_tmp.json 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/service_options_tmp.json" | tee -a "$LOG_FILE"
+          rm -f /tmp/oci_config 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/oci_config" | tee -a "$LOG_FILE"
+          rm -f /tmp/oci_api_private.pem 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/oci_api_private.pem" | tee -a "$LOG_FILE"
+          rm -f /tmp/${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}_setUpOCI.properties 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/${PREFIX}_setUpOCI.properties" | tee -a "$LOG_FILE"
+          rm -f /tmp/secret_temp_*.txt 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/secret_temp_*.txt" | tee -a "$LOG_FILE"
+          rm -f /tmp/config.yaml 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/config.yaml" | tee -a "$LOG_FILE"
+          rm -f /tmp/config_schema.yaml 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/config_schema.yaml" | tee -a "$LOG_FILE"
+          # Remove log files
+          rm -f /tmp/cd3_excel_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_excel_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_properties_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_properties_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_service_options_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_service_options_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_create_workflow_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_create_workflow_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_terraform_apply_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_terraform_apply_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_workflow_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_workflow_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/validate_config_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/validate_config_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_validate_workflow_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_validate_workflow_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_run_export_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_run_export_*.log" | tee -a "$LOG_FILE"
+          rm -f /tmp/cd3_validate_inputs_*.log 2>>"$LOG_FILE" || echo "Warning: Failed to remove /tmp/cd3_validate_inputs_*.log" | tee -a "$LOG_FILE"  
+          echo "Cleanup completed successfully" | tee -a "$LOG_FILE"
