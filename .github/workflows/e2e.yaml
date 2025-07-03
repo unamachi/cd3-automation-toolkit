@@ -358,8 +358,8 @@ jobs:
     env:
       OCI_REGION: us-phoenix-1
       INSTANCE_NAME: workvm-${{ github.run_id }}
-      INSTANCE_IP: ${{ github.event.inputs.use_existing_instance == 'true' && github.event.inputs.instance_ip || needs.Deploy_RM_Stack.outputs.instance_ip }}
-      INSTANCE_OCID: ${{ github.event.inputs.use_existing_instance == 'true' && github.event.inputs.instance_ocid || needs.Deploy_RM_Stack.outputs.instance_ocid }}
+      INSTANCE_IP: ${{ needs.Deploy_RM_Stack.outputs.instance_ip }}
+      INSTANCE_OCID: ${{ needs.Deploy_RM_Stack.outputs.instance_ocid }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -1391,8 +1391,8 @@ jobs:
       env:
         OCI_REGION: us-phoenix-1
         INSTANCE_NAME: workvm-${{ github.run_id }}
-        INSTANCE_IP: ${{ github.event.inputs.use_existing_instance == 'true' && github.event.inputs.instance_ip || needs.Deploy_RM_Stack.outputs.instance_ip }}
-        INSTANCE_OCID: ${{ github.event.inputs.use_existing_instance == 'true' && github.event.inputs.instance_ocid || needs.Deploy_RM_Stack.outputs.instance_ocid }}
+        INSTANCE_IP: ${{ github.event.inputs.instance_ip  }}
+        INSTANCE_OCID: ${{ github.event.inputs.instance_ocid }}
       steps:
         - name: Checkout code
           uses: actions/checkout@v4
