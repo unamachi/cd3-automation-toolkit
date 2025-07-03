@@ -32,30 +32,8 @@ on:
           description: 'OCID of existing instance (optional for validation)'
           required: false
 jobs:
-  Validate_Inputs:
-      runs-on: self-hosted
-      steps:
-        - name: Check use_existing_instance
-          run: |
-            LOG_FILE="/tmp/validate_inputs_$(date +%F_%H-%M-%S).log"
-            USE_EXISTING="${{ github.event.inputs.use_existing_instance }}"
-            if [ "$USE_EXISTING" != "true" ] && [ "$USE_EXISTING" != "false" ]; then
-              echo "Error: use_existing_instance must be 'true' or 'false', got '$USE_EXISTING'" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            if [ "$USE_EXISTING" = "true" ]; then
-              for INPUT in instance_ip instance_ocid public_ip; do
-                INPUT_VALUE="${{ github.event.inputs[INPUT] }}"
-                if [ -z "$INPUT_VALUE" ]; then
-                  echo "Error: $INPUT is required when use_existing_instance=true" | tee -a "$LOG_FILE"
-                  exit 1
-                fi
-              done
-            fi
-            echo "Input validation passed" | tee -a "$LOG_FILE"
   Deploy_RM_Stack:
     if: ${{ github.event.inputs.use_existing_instance == 'false' }}
-    needs: Validate_Inputs
     runs-on: [self-hosted]
     outputs:
       stack_id: ${{ steps.create-stack.outputs.stack_id }}
