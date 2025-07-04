@@ -1477,6 +1477,7 @@ jobs:
             mkdir -p ~/.ssh
             TEMP_KEY="/tmp/temp_key_$(date +%s).b64"
 
+            # Get base64 encoded secret from OCI
             oci secrets secret-bundle get \
               --secret-id "$EXISTING_SSH_PRIVATE_KEY_OCID" \
               --auth instance_principal \
@@ -1484,12 +1485,17 @@ jobs:
               --query 'data."secret-bundle-content".content' \
               --raw-output > "$TEMP_KEY" 2>>"$LOG_FILE"
 
-            TEMP_PRIVATE_KEY=$(base64 --decode "$TEMP_KEY")
-            echo "::add-mask::$TEMP_PRIVATE_KEY"
-            echo "$TEMP_PRIVATE_KEY" > ~/.ssh/temp-id_rsa
+            # Mask the content silently
+            MASKED_CONTENT=$(cat "$TEMP_KEY")
+            echo "::add-mask::$MASKED_CONTENT"
+
+            # Decode directly to the file without echoing content
+            base64 --decode "$TEMP_KEY" > ~/.ssh/temp-id_rsa 2>>"$LOG_FILE"
             chmod 600 ~/.ssh/temp-id_rsa
             rm -f "$TEMP_KEY"
-            echo "✅ SSH key stored in ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+
+            echo "✅ SSH private key stored in ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
+
 
         - name: Validate container on existing CD3 instance
           if: ${{ github.event.inputs.use_existing_instance == 'true' }}
