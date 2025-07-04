@@ -1903,6 +1903,7 @@ jobs:
             echo "Generated service_options.json:" | tee -a "$LOG_FILE"
             cat /tmp/service_options.json >> "$LOG_FILE"
 
+
         - name: Run CD3 Workflow
           if: steps.validate_workflow.outputs.create_resources_enabled == 'true' || steps.validate_workflow.outputs.export_resources_enabled == 'true'
           run: |
@@ -1921,7 +1922,7 @@ jobs:
             ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME ls $PROPERTIES_PATH" >>"$LOG_FILE" 2>&1 || { echo "Error: Properties file $PROPERTIES_PATH not found in container" | tee -a "$LOG_FILE"; exit 1; }
             ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME ls /cd3user/oci_tools/cd3_automation_toolkit/setUpOCI.py" >>"$LOG_FILE" 2>&1 || { echo "Error: setUpOCI.py not found in container" | tee -a "$LOG_FILE"; exit 1; }
 
-            # Copy service_options.json to container
+            # Copy service_options.json to container (needed for both workflows)
             if [ ! -f /tmp/service_options.json ]; then
               echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
               exit 1
@@ -1934,7 +1935,7 @@ jobs:
               # Validation Workflow
               # Create and copy validate_cd3 script
               echo "Creating validate_cd3 script" | tee -a "$LOG_FILE"
-              cat << EOF > get_validate_cd3.py
+              cat << 'EOF' > get_validate_cd3.py
               import yaml
               import sys
               try:
@@ -2099,6 +2100,7 @@ jobs:
               done
               echo "Export workflow completed successfully" | tee -a "$LOG_FILE"
             fi
+
             echo "CD3 workflow completed successfully" | tee -a "$LOG_FILE"
 
         - name: Retrieve Exported Files
