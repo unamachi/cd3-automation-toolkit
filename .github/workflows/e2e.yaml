@@ -1496,6 +1496,15 @@ jobs:
 
             echo "✅ SSH private key stored in ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
 
+            # Print path and size of the SSH key
+            if [ -f ~/.ssh/temp-id_rsa ]; then
+              echo "📂 SSH key path: $(realpath ~/.ssh/temp-id_rsa)" | tee -a "$LOG_FILE"
+              echo "📏 File size: $(du -h ~/.ssh/temp-id_rsa | cut -f1)" | tee -a "$LOG_FILE"
+              echo "🔐 Permissions: $(ls -l ~/.ssh/temp-id_rsa)" | tee -a "$LOG_FILE"
+            else
+              echo "❌ SSH private key file not found at expected path" | tee -a "$LOG_FILE"
+              exit 1
+            fi
 
         - name: Validate container on existing CD3 instance
           if: ${{ github.event.inputs.use_existing_instance == 'true' }}
