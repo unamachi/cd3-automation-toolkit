@@ -2114,7 +2114,25 @@ jobs:
           
               # Define mapping from main_option to OCI Service Name
               declare -A MAIN_OPTION_TO_SERVICE
-              MAIN_OPTION_TO_SERVICE["CD3 Services"]="identity"
+
+              # === Create Workflow Options ===
+              MAIN_OPTION_TO_SERVICE["Identity"]="identity"
+              MAIN_OPTION_TO_SERVICE["Governance"]="tagging"
+              MAIN_OPTION_TO_SERVICE["Cost Management"]="budget"
+              MAIN_OPTION_TO_SERVICE["Network"]="network"
+              MAIN_OPTION_TO_SERVICE["OCI Firewall"]="firewall"
+              MAIN_OPTION_TO_SERVICE["DNS Management"]="dns"
+              MAIN_OPTION_TO_SERVICE["Compute"]="instance"
+              MAIN_OPTION_TO_SERVICE["Storage"]="block_volume"
+              MAIN_OPTION_TO_SERVICE["Database"]="dbsystem_vm_bm"
+              MAIN_OPTION_TO_SERVICE["Load Balancers"]="loadbalancer"
+              MAIN_OPTION_TO_SERVICE["Management Services"]="managementservices"
+              MAIN_OPTION_TO_SERVICE["Developer Services"]="oke"
+              MAIN_OPTION_TO_SERVICE["Security"]="kms"
+              MAIN_OPTION_TO_SERVICE["Logging Services"]="logging"
+              MAIN_OPTION_TO_SERVICE["Software-Defined Data Centers - OCVS"]="sddc"
+
+              # === Export Workflow Options (some may overlap) ===
               MAIN_OPTION_TO_SERVICE["Export Compute"]="instance"
               MAIN_OPTION_TO_SERVICE["Export Identity"]="identity"
               MAIN_OPTION_TO_SERVICE["Export Governance"]="tagging"
@@ -2129,7 +2147,8 @@ jobs:
               MAIN_OPTION_TO_SERVICE["Export Developer Services"]="oke"
               MAIN_OPTION_TO_SERVICE["Export Security"]="kms"
               MAIN_OPTION_TO_SERVICE["Export Software-Defined Data Centers - OCVS"]="sddc"
-          
+
+                        
               # Process each main_option from service_options.json
               jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
                 echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
