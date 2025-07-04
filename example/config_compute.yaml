@@ -1,0 +1,18 @@
+cd3_workflows:
+  export_resources:
+    enabled: false
+    validate_cd3: false
+    filters:
+      regions: ["phoenix"]
+      compartment_ids: ["Ulag"]
+    operations:
+      - main_option: Export Compute
+        sub_options:
+          - Export Instances (excludes instances launched by OKE)
+  create_resources:
+    enabled: true
+    validate_cd3: false
+    operations:
+      - main_option: Compute
+        sub_options:
+          - Add/Modify/Delete Instances/Boot Backup Policy
