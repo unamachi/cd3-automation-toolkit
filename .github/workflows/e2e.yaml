@@ -1904,7 +1904,7 @@ jobs:
             cat /tmp/service_options.json >> "$LOG_FILE"
 
         - name: Run Workflow with Validation
-          #if: steps.validate_workflow.outputs.create_resources_enabled == 'true'
+          if: steps.validate_workflow.outputs.create_resources_enabled == 'true'
           run: |
             LOG_FILE="/tmp/cd3_workflow_$(date +%F_%H-%M-%S).log"
             CONTAINER_NAME="cd3_toolkit"
@@ -2146,7 +2146,7 @@ jobs:
             mkdir -p "$LOCAL_DIR" 2>>"$LOG_FILE" || { echo "Error: Failed to create local directory $LOCAL_DIR" | tee -a "$LOG_FILE"; exit 1; }
             ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp $CONTAINER_NAME:$EXPORTED_DIR /tmp/exported_files" 2>>"$LOG_FILE" || { echo "Error: Failed to copy exported files from container" | tee -a "$LOG_FILE"; exit 1; }
             scp -r -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP":/tmp/exported_files/* "$LOCAL_DIR" 2>>"$LOG_FILE" || { echo "Error: Failed to SCP exported files to runner" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "rm -rf /tmp/exported_files" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary exported files" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "if [ -d /tmp/exported_files ]; then sudo rm -rf /tmp/exported_files; else echo 'Warning: /tmp/exported_files does not exist, skipping removal' >> /tmp/remove.log; fi" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary exported files" | tee -a "$LOG_FILE"; cat /tmp/remove.log >> "$LOG_FILE" 2>/dev/null; exit 1; }
             echo "Exported files retrieved to $LOCAL_DIR:" | tee -a "$LOG_FILE"
             ls -l "$LOCAL_DIR" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list exported files" | tee -a "$LOG_FILE"; exit 1; }
             echo "Retrieve Exported Files completed successfully" | tee -a "$LOG_FILE"
