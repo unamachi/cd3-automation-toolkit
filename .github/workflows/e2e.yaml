@@ -1903,7 +1903,7 @@ jobs:
             echo "Generated service_options.json:" | tee -a "$LOG_FILE"
             cat /tmp/service_options.json >> "$LOG_FILE"
 
-        - name: Run Unified CD3 Workflow (Create + Export)
+        - name: Run CD3 Workflow
           if: steps.validate_workflow.outputs.create_resources_enabled == 'true' || steps.validate_workflow.outputs.export_resources_enabled == 'true'
           run: |
             LOG_FILE="/tmp/cd3_workflow_$(date +%F_%H-%M-%S).log"
@@ -1911,114 +1911,195 @@ jobs:
             PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
             PROPERTIES_PATH="/cd3user/tenancies/$PREFIX/config/${PREFIX}_setUpOCI.properties"
             SERVICE_JSON_PATH="/tmp/service_options.json"
-            VALIDATE_SCRIPT="/tmp/get_validate_cd3.py"
             CONFIG_PATH="/tmp/config.yaml"
+            VALIDATE_SCRIPT="/tmp/get_validate_cd3.py"
+            WF_TYPE="${{ steps.validate_workflow.outputs.workflow_type }}"
+            echo "Starting CD3 workflow at $(date) for workflow type: $WF_TYPE" | tee -a "$LOG_FILE"
 
-            echo "Starting unified CD3 workflow at $(date)" | tee -a "$LOG_FILE"
+            # Check properties file and setUpOCI.py in container
+            echo "Checking properties file and setUpOCI.py in container" | tee -a "$LOG_FILE"
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME ls $PROPERTIES_PATH" >>"$LOG_FILE" 2>&1 || { echo "Error: Properties file $PROPERTIES_PATH not found in container" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME ls /cd3user/oci_tools/cd3_automation_toolkit/setUpOCI.py" >>"$LOG_FILE" 2>&1 || { echo "Error: setUpOCI.py not found in container" | tee -a "$LOG_FILE"; exit 1; }
 
-            if [ ! -f "config.yaml" ]; then
-              echo "Error: config.yaml not found in repository" | tee -a "$LOG_FILE"
+            # Copy service_options.json to container
+            if [ ! -f /tmp/service_options.json ]; then
+              echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
               exit 1
             fi
+            echo "Contents of /tmp/service_options.json:" | tee -a "$LOG_FILE"
+            cat /tmp/service_options.json >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to read /tmp/service_options.json" | tee -a "$LOG_FILE"; exit 1; }
+            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/service_options.json $CONTAINER_NAME:$SERVICE_JSON_PATH" 2>>"$LOG_FILE" || { echo "Error: Failed to copy service_options.json to container" | tee -a "$LOG_FILE"; exit 1; }
 
-            WF_TYPE="${{ steps.validate_workflow.outputs.workflow_type }}"
-            echo "Workflow type: $WF_TYPE" | tee -a "$LOG_FILE"
+            if [ "${{ steps.validate_workflow.outputs.create_resources_enabled }}" == "true" ]; then
+              # Validation Workflow
+              # Create and copy validate_cd3 script
+              echo "Creating validate_cd3 script" | tee -a "$LOG_FILE"
+              cat << EOF > get_validate_cd3.py
+              import yaml
+              import sys
+              try:
+                  wf_type = sys.argv[1]
+                  with open('/tmp/config.yaml') as f:
+                      config = yaml.safe_load(f)
+                  validate_cd3 = config['cd3_workflows'][wf_type]['validate_cd3']
+                  print(str(validate_cd3).lower())
+              except yaml.YAMLError as e:
+                  print(f'Invalid YAML in config.yaml: {str(e)}')
+                  sys.exit(1)
+              except FileNotFoundError as e:
+                  print(f'File not found: {str(e)}')
+                  sys.exit(1)
+              except KeyError as e:
+                  print(f'Missing key in config.yaml: {str(e)}')
+                  sys.exit(1)
+              except Exception as e:
+                  print(f'Unexpected error: {str(e)}')
+                  sys.exit(1)
+              EOF
+              echo "Copying validate_cd3 script to instance" | tee -a "$LOG_FILE"
+              scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no get_validate_cd3.py opc@"$INSTANCE_IP":/tmp/get_validate_cd3.py 2>>"$LOG_FILE" || { echo "Error: Failed to SCP validate_cd3 script to instance" | tee -a "$LOG_FILE"; exit 1; }
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/get_validate_cd3.py $CONTAINER_NAME:$VALIDATE_SCRIPT" 2>>"$LOG_FILE" || { echo "Error: Failed to copy validate_cd3 script to container" | tee -a "$LOG_FILE"; exit 1; }
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "rm -f /tmp/get_validate_cd3.py" 2>>"$LOG_FILE" || echo "Warning: Failed to remove temporary validate_cd3 script from instance" | tee -a "$LOG_FILE"
 
-            # Only for export: read filters from config.yaml
-            if [ "$WF_TYPE" = "export_resources" ]; then
-              REGIONS=$(yq e '.cd3_workflows.export_resources.filters.regions | join(",")' config.yaml)
-              COMPARTMENT_IDS=$(yq e '.cd3_workflows.export_resources.filters.compartment_ids | join(",")' config.yaml)
-              TAGS=$(yq e '.cd3_workflows.export_resources.filters.tags | join(",")' config.yaml)
-            fi
+              # Run validate_cd3 script
+              echo "Reading validate_cd3 from config.yaml" | tee -a "$LOG_FILE"
+              VALIDATE=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME python3 $VALIDATE_SCRIPT $WF_TYPE") 2>>"$LOG_FILE" || { echo "Error: Failed to read validate_cd3 from config.yaml" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+              echo "Validate CD3: $VALIDATE" | tee -a "$LOG_FILE"
 
-            # Create validation script
-            cat << EOF > get_validate_cd3.py
-            import yaml
-            import sys
-            try:
-                wf_type = sys.argv[1]
-                with open('/tmp/config.yaml') as f:
-                    config = yaml.safe_load(f)
-                validate_cd3 = config['cd3_workflows'][wf_type]['validate_cd3']
-                print(str(validate_cd3).lower())
-            except yaml.YAMLError as e:
-                print(f'Invalid YAML in config.yaml: {str(e)}')
-                sys.exit(1)
-            except FileNotFoundError as e:
-                print(f'File not found: {str(e)}')
-                sys.exit(1)
-            except KeyError as e:
-                print(f'Missing key in config.yaml: {str(e)}')
-                sys.exit(1)
-            except Exception as e:
-                print(f'Unexpected error: {str(e)}')
-                sys.exit(1)
-            EOF
-
-            echo "Copying validate_cd3 script to instance" | tee -a "$LOG_FILE"
-            scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no get_validate_cd3.py opc@"$INSTANCE_IP":/tmp/get_validate_cd3.py 2>>"$LOG_FILE" || exit 1
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/get_validate_cd3.py $CONTAINER_NAME:$VALIDATE_SCRIPT" || exit 1
-
-            # Run validation check
-            VALIDATE=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME python3 $VALIDATE_SCRIPT $WF_TYPE")
-            echo "Validate CD3: $VALIDATE" | tee -a "$LOG_FILE"
-
-            # Copy service options JSON
-            if [ -f /tmp/service_options.json ]; then
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/service_options.json $CONTAINER_NAME:$SERVICE_JSON_PATH" || exit 1
-            fi
-
-            if [ "$WF_TYPE" = "create_resources" ]; then
               if [ "$VALIDATE" = "true" ]; then
+                echo "Running Validate CD3 for $WF_TYPE..." | tee -a "$LOG_FILE"
                 jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
+                  echo "Validating main_option: $main_option" | tee -a "$LOG_FILE"
                   VALIDATE_SUB_OPTION="Validate $main_option"
-                  CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --main_options=Validate --sub_options=\"$VALIDATE_SUB_OPTION\""
+                  CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --main_options=\"Validate\" --sub_options=\"$VALIDATE_SUB_OPTION\""
                   echo "Executing: $CMD" | tee -a "$LOG_FILE"
-                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" || exit 1
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Validation failed for $main_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
                 done
               fi
 
               jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
-                IS_ARRAY=$(jq -r --arg key "$main_option" '.[$key] | if type == "array" then "true" else "false" end' /tmp/service_options.json)
+                echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
+                IS_ARRAY=$(jq -r --arg key "$main_option" '.[$key] | if type == "array" then "true" else "false" end' /tmp/service_options.json 2>>"$LOG_FILE")
+                if [ $? -ne 0 ]; then
+                  echo "Error: Failed to check type for $main_option in /tmp/service_options.json" | tee -a "$LOG_FILE"
+                  cat /tmp/service_options.json >> "$LOG_FILE"
+                  exit 1
+                fi
                 if [ "$IS_ARRAY" = "true" ]; then
-                  SUB_OPTIONS=$(jq -r --arg key "$main_option" '.[$key][]' /tmp/service_options.json | tr '\n' ',' | sed 's/,$//')
+                  SUB_OPTIONS=$(jq -r --arg key "$main_option" '.[$key][]' /tmp/service_options.json 2>>"$LOG_FILE" | tr '\n' ',' | sed 's/,$//')
+                  if [ $? -ne 0 ]; then
+                    echo "Error: Failed to extract sub-options for $main_option" | tee -a "$LOG_FILE"
+                    cat /tmp/service_options.json >> "$LOG_FILE"
+                    exit 1
+                  fi
+                  if [ -z "$SUB_OPTIONS" ]; then
+                    echo "Warning: No sub-options defined for $main_option, skipping" | tee -a "$LOG_FILE"
+                    continue
+                  fi
+                  echo "Sub-options for $main_option: $SUB_OPTIONS" | tee -a "$LOG_FILE"
                   CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=true --main_options=$main_option --sub_options=\"$SUB_OPTIONS\""
+                  echo "Executing: $CMD" | tee -a "$LOG_FILE"
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run workflow for $main_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
                 else
-                  jq -r --arg key "$main_option" '.[$key] | to_entries[] | .key' /tmp/service_options.json | while read -r sub_option; do
-                    SUB_CHILD_OPTIONS=$(jq -r --arg key "$main_option" --arg subkey "$sub_option" '.[$key][$subkey][]' /tmp/service_options.json | tr '\n' ',' | sed 's/,$//')
+                  jq -r --arg key "$main_option" '.[$key] | to_entries[] | .key' /tmp/service_options.json 2>>"$LOG_FILE" | while read -r sub_option; do
+                    echo "Processing sub_option: $sub_option for $main_option" | tee -a "$LOG_FILE"
+                    SUB_CHILD_OPTIONS=$(jq -r --arg key "$main_option" --arg subkey "$sub_option" '.[$key][$subkey][]' /tmp/service_options.json 2>>"$LOG_FILE" | tr '\n' ',' | sed 's/,$//')
+                    if [ $? -ne 0 ]; then
+                      echo "Error: Failed to extract sub-child-options for $main_option:$sub_option" | tee -a "$LOG_FILE"
+                      cat /tmp/service_options.json >> "$LOG_FILE"
+                      exit 1
+                    fi
+                    echo "Sub-child-options for $main_option:$sub_option: $SUB_CHILD_OPTIONS" | tee -a "$LOG_FILE"
                     CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=true --main_options=\"$main_option\" --sub_options=\"$sub_option\""
                     if [ -n "$SUB_CHILD_OPTIONS" ]; then
                       CMD="$CMD --sub_child_options=\"$SUB_CHILD_OPTIONS\""
                     fi
                     echo "Executing: $CMD" | tee -a "$LOG_FILE"
-                    ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" || exit 1
+                    ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run workflow for $main_option:$sub_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+                  done
+                fi
+                echo "Workflow completed for $main_option" | tee -a "$LOG_FILE"
+              done
+              echo "Validation workflow completed successfully" | tee -a "$LOG_FILE"
+            fi
+
+            if [ "${{ steps.validate_workflow.outputs.export_resources_enabled }}" == "true" ] && [ "$WF_TYPE" = "export_resources" ]; then
+              # Export Workflow
+              if [ ! -f "config.yaml" ]; then
+                echo "Error: config.yaml not found in repository" | tee -a "$LOG_FILE"
+                exit 1
+              fi
+              # Read filters from config.yaml
+              REGIONS=$(yq e '.cd3_workflows.export_resources.filters.regions | join(",")' config.yaml)
+              COMPARTMENT_IDS=$(yq e '.cd3_workflows.export_resources.filters.compartment_ids | join(",")' config.yaml)
+              TAGS=$(yq e '.cd3_workflows.export_resources.filters.tags | join(",")' config.yaml)
+
+              jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
+                echo "Processing main_option: $main_option for export workflow" | tee -a "$LOG_FILE"
+                IS_ARRAY=$(jq -r --arg key "$main_option" '.[$key] | if type == "array" then "true" else "false" end' /tmp/service_options.json 2>>"$LOG_FILE")
+                if [ $? -ne 0 ]; then
+                  echo "Error: Failed to check type for $main_option in /tmp/service_options.json" | tee -a "$LOG_FILE"
+                  cat /tmp/service_options.json >> "$LOG_FILE"
+                  exit 1
+                fi
+                CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=true --main_options=\"$main_option\""
+                if [ -n "$REGIONS" ]; then
+                  CMD="$CMD --add_filter regions=$REGIONS"
+                fi
+                if [ -n "$COMPARTMENT_IDS" ]; then
+                  CMD="$CMD,compartment_ids=$COMPARTMENT_IDS"
+                fi
+                if [ -n "$TAGS" ]; then
+                  CMD="$CMD,tags=$TAGS"
+                fi
+                if [ "$IS_ARRAY" = "true" ]; then
+                  SUB_OPTIONS=$(jq -r --arg key "$main_option" '.[$key][]' /tmp/service_options.json 2>>"$LOG_FILE" | tr '\n' ',' | sed 's/,$//')
+                  if [ $? -ne 0 ]; then
+                    echo "Error: Failed to extract sub-options for $main_option" | tee -a "$LOG_FILE"
+                    cat /tmp/service_options.json >> "$LOG_FILE"
+                    exit 1
+                  fi
+                  if [ -z "$SUB_OPTIONS" ]; then
+                    echo "Warning: No sub-options defined for $main_option, proceeding with main_option only" | tee -a "$LOG_FILE"
+                  else
+                    echo "Sub-options for $main_option: $SUB_OPTIONS" | tee -a "$LOG_FILE"
+                    CMD="$CMD --sub_options=\"$SUB_OPTIONS\""
+                  fi
+                else
+                  jq -r --arg key "$main_option" '.[$key] | to_entries[] | .key' /tmp/service_options.json 2>>"$LOG_FILE" | while read -r sub_option; do
+                    echo "Processing sub_option: $sub_option for $main_option" | tee -a "$LOG_FILE"
+                    SUB_CHILD_OPTIONS=$(jq -r --arg key "$main_option" --arg subkey "$sub_option" '.[$key][$subkey][]' /tmp/service_options.json 2>>"$LOG_FILE" | tr '\n' ',' | sed 's/,$//')
+                    if [ $? -ne 0 ]; then
+                      echo "Error: Failed to extract sub-child-options for $main_option:$sub_option" | tee -a "$LOG_FILE"
+                      cat /tmp/service_options.json >> "$LOG_FILE"
+                      exit 1
+                    fi
+                    echo "Sub-child-options for $main_option:$sub_option: $SUB_CHILD_OPTIONS" | tee -a "$LOG_FILE"
+                    CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=true --main_options=\"$main_option\" --sub_options=\"$sub_option\""
+                    if [ -n "$REGIONS" ]; then
+                      CMD="$CMD --add_filter regions=$REGIONS"
+                    fi
+                    if [ -n "$COMPARTMENT_IDS" ]; then
+                      CMD="$CMD,compartment_ids=$COMPARTMENT_IDS"
+                    fi
+                    if [ -n "$TAGS" ]; then
+                      CMD="$CMD,tags=$TAGS"
+                    fi
+                    if [ -n "$SUB_CHILD_OPTIONS" ]; then
+                      CMD="$CMD --sub_child_options=\"$SUB_CHILD_OPTIONS\""
+                    fi
+                    echo "Executing: $CMD" | tee -a "$LOG_FILE"
+                    ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run export workflow for $main_option:$sub_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
                   done
                   continue
                 fi
                 echo "Executing: $CMD" | tee -a "$LOG_FILE"
-                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" || exit 1
+                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run export workflow for $main_option" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
+                echo "Export workflow completed for $main_option" | tee -a "$LOG_FILE"
               done
-            elif [ "$WF_TYPE" = "export_resources" ]; then
-              CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH --devops=true"
-              ADD_FILTER=""
-              if [ -n "$REGIONS" ]; then
-                ADD_FILTER="regions=$REGIONS"
-              fi
-              if [ -n "$COMPARTMENT_IDS" ]; then
-                if [ -n "$ADD_FILTER" ]; then ADD_FILTER="$ADD_FILTER,compartment_ids=$COMPARTMENT_IDS"; else ADD_FILTER="compartment_ids=$COMPARTMENT_IDS"; fi
-              fi
-              if [ -n "$TAGS" ]; then
-                if [ -n "$ADD_FILTER" ]; then ADD_FILTER="$ADD_FILTER,tags=$TAGS"; else ADD_FILTER="tags=$TAGS"; fi
-              fi
-              if [ -n "$ADD_FILTER" ]; then
-                CMD="$CMD --add_filter $ADD_FILTER"
-              fi
-              echo "Executing: $CMD" | tee -a "$LOG_FILE"
-              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" || exit 1
+              echo "Export workflow completed successfully" | tee -a "$LOG_FILE"
             fi
-
-            echo "Workflow completed successfully for $WF_TYPE" | tee -a "$LOG_FILE"
-
+            echo "CD3 workflow completed successfully" | tee -a "$LOG_FILE"
 
         - name: Retrieve Exported Files
           if: steps.validate_workflow.outputs.export_resources_enabled == 'true'
