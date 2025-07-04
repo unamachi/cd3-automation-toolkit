@@ -163,9 +163,16 @@ jobs:
               # Retrieve OCI Vault public key (optional)
               SSH_PUBLIC_KEYS="${{ env.TEMP_SSH_PUBLIC_KEY }}"
               if [ -n "$SSH_KEY_SECRET_OCID" ]; then
-                oci secrets secret-bundle get --secret-id "$SSH_KEY_SECRET_OCID" --auth instance_principal --query 'data."secret-bundle-content".content' --raw-output > "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to retrieve SSH_KEY_SECRET_OCID" | tee -a "$LOG_FILE"; exit 1; }
+                oci secrets secret-bundle get --secret-id "$SSH_KEY_SECRET_OCID" \
+                  --auth instance_principal \
+                  --query 'data."secret-bundle-content".content' \
+                  --raw-output > "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to retrieve SSH_KEY_SECRET_OCID" | tee -a "$LOG_FILE"; exit 1; }
+
                 CUSTOMER_SSH_PUBLIC_KEY=$(base64 --decode "$TEMP_SECRET_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to decode SSH_KEY_SECRET_OCID" | tee -a "$LOG_FILE"; exit 1; })
-                SSH_PUBLIC_KEYS="$SSH_PUBLIC_KEYS\n$CUSTOMER_SSH_PUBLIC_KEY"
+
+                #join keys with real newline
+                SSH_PUBLIC_KEYS=$(printf "%s\n%s" "$SSH_PUBLIC_KEYS" "$CUSTOMER_SSH_PUBLIC_KEY")
+
                 echo "Retrieved customer SSH public key from OCI Vault" | tee -a "$LOG_FILE"
               else
                 echo "Warning: SSH_KEY_SECRET_OCID is unset, only temporary key will be used" | tee -a "$LOG_FILE"
