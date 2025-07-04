@@ -1470,21 +1470,14 @@ jobs:
 
         - name: Prepare SSH Private Key
           if: ${{ github.event.inputs.use_existing_instance == 'true' }}
-          env:
-            EXISTING_SSH_PRIVATE_KEY_OCID: ${{ secrets.EXISTING_SSH_PRIVATE_KEY_OCID }}
           run: |
-            set -e
-
             LOG_FILE="/tmp/cd3_ssh_key_prep_$(date +%F_%H-%M-%S).log"
-            echo "📌 Starting key prep" | tee -a "$LOG_FILE"
-            echo "USER: $(whoami)" | tee -a "$LOG_FILE"
-            echo "HOME: $HOME" | tee -a "$LOG_FILE"
-            echo "PWD: $(pwd)" | tee -a "$LOG_FILE"
+            echo "Retrieving SSH private key from OCI Vault..." | tee -a "$LOG_FILE"
 
             mkdir -p ~/.ssh
             TEMP_KEY="/tmp/temp_key_$(date +%s).b64"
 
-            echo "🔐 Fetching secret from OCI Vault..." | tee -a "$LOG_FILE"
+            # Get base64 encoded secret from OCI
             oci secrets secret-bundle get \
               --secret-id "$EXISTING_SSH_PRIVATE_KEY_OCID" \
               --auth instance_principal \
@@ -1492,19 +1485,16 @@ jobs:
               --query 'data."secret-bundle-content".content' \
               --raw-output > "$TEMP_KEY" 2>>"$LOG_FILE"
 
-            echo "📁 TEMP_KEY contents (base64, first 10 chars): $(head -c 10 $TEMP_KEY || echo '<EMPTY>')" | tee -a "$LOG_FILE"
+            # Mask the content silently
+            MASKED_CONTENT=$(cat "$TEMP_KEY")
+            echo "::add-mask::$MASKED_CONTENT"
 
-            # Decode it
-            TARGET_KEY="/tmp/temp-id_rsa"
-            base64 --decode "$TEMP_KEY" > "$TARGET_KEY" 2>>"$LOG_FILE" || echo "❌ base64 decode failed" >> "$LOG_FILE"
-            chmod 600 "$TARGET_KEY"
+            # Decode directly to the file without echoing content
+            base64 --decode "$TEMP_KEY" > ~/.ssh/temp-id_rsa 2>>"$LOG_FILE"
+            chmod 600 ~/.ssh/temp-id_rsa
+            rm -f "$TEMP_KEY"
 
-            echo "📂 Key written to: $TARGET_KEY" | tee -a "$LOG_FILE"
-            ls -l "$TARGET_KEY" | tee -a "$LOG_FILE"
-            file "$TARGET_KEY" | tee -a "$LOG_FILE"
-            du -h "$TARGET_KEY" | tee -a "$LOG_FILE"
-
-            echo "✅ SSH key prep done" | tee -a "$LOG_FILE"
+            echo "✅ SSH private key stored in ~/.ssh/temp-id_rsa" | tee -a "$LOG_FILE"
 
 
         - name: Validate container on existing CD3 instance
@@ -2373,7 +2363,7 @@ jobs:
 
 
         - name: Cleanup SSH Key
-          if: always()
+          if: success()
           run: |
                 LOG_FILE="/tmp/ssh_cleanup_$(date +%F_%H-%M-%S).log"
                 rm -f ~/.ssh/temp-id_rsa ~/.ssh/known_hosts 2>>"$LOG_FILE" || echo "Warning: Failed to remove SSH files" | tee -a "$LOG_FILE"
