@@ -1279,6 +1279,24 @@ jobs:
         
             # Define mapping from main_option to OCI Service Name
             declare -A MAIN_OPTION_TO_SERVICE
+
+            # === Create Workflow Options ===
+            MAIN_OPTION_TO_SERVICE["Identity"]="identity"
+            MAIN_OPTION_TO_SERVICE["Governance"]="tagging"
+            MAIN_OPTION_TO_SERVICE["Cost Management"]="budget"
+            MAIN_OPTION_TO_SERVICE["Network"]="network"
+            MAIN_OPTION_TO_SERVICE["OCI Firewall"]="firewall"
+            MAIN_OPTION_TO_SERVICE["DNS Management"]="dns"
+            MAIN_OPTION_TO_SERVICE["Compute"]="instance"
+            MAIN_OPTION_TO_SERVICE["Storage"]="block_volume"
+            MAIN_OPTION_TO_SERVICE["Database"]="dbsystem_vm_bm"
+            MAIN_OPTION_TO_SERVICE["Load Balancers"]="loadbalancer"
+            MAIN_OPTION_TO_SERVICE["Management Services"]="managementservices"
+            MAIN_OPTION_TO_SERVICE["Developer Services"]="oke"
+            MAIN_OPTION_TO_SERVICE["Security"]="kms"
+            MAIN_OPTION_TO_SERVICE["Logging Services"]="logging"
+            MAIN_OPTION_TO_SERVICE["Software-Defined Data Centers - OCVS"]="sddc"
+
             MAIN_OPTION_TO_SERVICE["CD3 Services"]="identity"
             MAIN_OPTION_TO_SERVICE["Export Compute"]="instance"
             MAIN_OPTION_TO_SERVICE["Export Identity"]="identity"
@@ -1886,7 +1904,7 @@ jobs:
             cat /tmp/service_options.json >> "$LOG_FILE"
 
         - name: Run Workflow with Validation
-          if: steps.validate_workflow.outputs.create_resources_enabled == 'true'
+          #if: steps.validate_workflow.outputs.create_resources_enabled == 'true'
           run: |
             LOG_FILE="/tmp/cd3_workflow_$(date +%F_%H-%M-%S).log"
             CONTAINER_NAME="cd3_toolkit"
@@ -2024,13 +2042,13 @@ jobs:
             TAGS=$(yq e '.cd3_workflows.export_resources.filters.tags | join(",")' config.yaml)
             CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 setUpOCI.py $PROPERTIES_PATH  --devops=true"
             if [ -n "$REGIONS" ]; then
-              CMD="$CMD --regions $REGIONS"
+              CMD="$CMD --add_filter --regions $REGIONS"
             fi
             if [ -n "$COMPARTMENT_IDS" ]; then
-              CMD="$CMD --compartment_ids $COMPARTMENT_IDS"
+              CMD="$CMD --add_filter --compartment_ids $COMPARTMENT_IDS"
             fi
             if [ -n "$TAGS" ]; then
-              CMD="$CMD --tags $TAGS"
+              CMD="$CMD --add_filter --tags $TAGS"
             fi
             echo "Executing: $CMD" | tee -a "$LOG_FILE"
             ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >>"$LOG_FILE" 2>&1 || { echo "Error: Failed to run setUpOCI for export_resources" | tee -a "$LOG_FILE"; cat "$LOG_FILE"; exit 1; }
