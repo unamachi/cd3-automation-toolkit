@@ -1956,7 +1956,7 @@ jobs:
               except Exception as e:
                   print(f'Unexpected error: {str(e)}')
                   sys.exit(1)
-              EOF
+              'EOF'
               echo "Copying validate_cd3 script to instance" | tee -a "$LOG_FILE"
               scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no get_validate_cd3.py opc@"$INSTANCE_IP":/tmp/get_validate_cd3.py 2>>"$LOG_FILE" || { echo "Error: Failed to SCP validate_cd3 script to instance" | tee -a "$LOG_FILE"; exit 1; }
               ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp /tmp/get_validate_cd3.py $CONTAINER_NAME:$VALIDATE_SCRIPT" 2>>"$LOG_FILE" || { echo "Error: Failed to copy validate_cd3 script to container" | tee -a "$LOG_FILE"; exit 1; }
