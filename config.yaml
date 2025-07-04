@@ -13,6 +13,6 @@ cd3_workflows:
     enabled: true
     validate_cd3: false
     operations:
-      - main_option: Identity
+      - main_option: Compute
         sub_options:
-          - Add/Modify/Delete Compartments
+          - Add/Modify/Delete Instances/Boot Backup Policy
