@@ -1754,7 +1754,7 @@ jobs:
             FORCE_UPDATE="${{ github.event.inputs.force_update_prefix }}"
             echo "Checking prefix: $PREFIX" | tee -a "$LOG_FILE"
             PREFIX_DIR="/cd3user/tenancies/$PREFIX"
-            TENANCY_CONFIG_PATH="/cd3user/tenancies/$PREFIX/config/tenancyconfig.properties"
+            TENANCY_CONFIG_PATH="/cd3user/tenancies/$PREFIX/.config_files/$PREFIX_tenancyconfig.properties"
             if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME test -d $PREFIX_DIR" 2>>"$LOG_FILE"; then
               echo "Prefix $PREFIX already exists, checking tenancy config" | tee -a "$LOG_FILE"
               if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME test -f $TENANCY_CONFIG_PATH" 2>>"$LOG_FILE"; then
