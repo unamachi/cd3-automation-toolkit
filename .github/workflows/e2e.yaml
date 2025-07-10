@@ -10,6 +10,11 @@ on:
       prefix:
         description: 'Custom prefix for tenancy config (default: <branch>-<run_id>)'
         required: false
+      force_update_prefix:
+        description: 'Force update tenancy config for existing prefix (e.g., for new region subscription) (true/false)'
+        type: boolean
+        required: false
+        default: false
       region:
           description: 'OCI region (e.g., us-phoenix-1)'
           required: true
@@ -1740,6 +1745,37 @@ jobs:
             echo "OCI config file copied to $OCI_CONFIG_DEST_PATH" | tee -a "$LOG_FILE"
             echo "setUpOCI properties file created successfully" | tee -a "$LOG_FILE"
 
+
+        - name: Run createTenancyConfig for Prefix
+          run: |
+            LOG_FILE="/tmp/cd3_tenancy_config_$(date +%F_%H-%M-%S).log"
+            CONTAINER_NAME="cd3_toolkit"
+            PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+            FORCE_UPDATE="${{ github.event.inputs.force_update_prefix }}"
+            echo "Checking prefix: $PREFIX" | tee -a "$LOG_FILE"
+            PREFIX_DIR="/cd3user/tenancies/$PREFIX"
+            TENANCY_CONFIG_PATH="/cd3user/tenancies/$PREFIX/config/tenancyconfig.properties"
+            if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME test -d $PREFIX_DIR" 2>>"$LOG_FILE"; then
+              echo "Prefix $PREFIX already exists, checking tenancy config" | tee -a "$LOG_FILE"
+              if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME test -f $TENANCY_CONFIG_PATH" 2>>"$LOG_FILE"; then
+                if [ "$FORCE_UPDATE" = "true" ]; then
+                  echo "force_update_prefix is true, forcing update for prefix: $PREFIX" | tee -a "$LOG_FILE"
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/user-scripts/ && echo \"y\" | python createTenancyConfig.py $TENANCY_CONFIG_PATH'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run createTenancyConfig.py for $PREFIX" | tee -a "$LOG_FILE"; exit 1; }
+                  echo "createTenancyConfig.py completed with forced update for $PREFIX" | tee -a "$LOG_FILE"
+                else
+                  echo "force_update_prefix is false, skipping createTenancyConfig.py for existing prefix: $PREFIX" | tee -a "$LOG_FILE"
+                fi
+              else
+                echo "Tenancy config does not exist for $PREFIX, running createTenancyConfig.py" | tee -a "$LOG_FILE"
+                ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/user-scripts/ && python createTenancyConfig.py $TENANCY_CONFIG_PATH'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run createTenancyConfig.py for $PREFIX" | tee -a "$LOG_FILE"; exit 1; }
+                echo "createTenancyConfig.py completed for $PREFIX" | tee -a "$LOG_FILE"
+              fi
+            else
+              echo "Running createTenancyConfig.py for new prefix: $PREFIX" | tee -a "$LOG_FILE"
+              ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME bash -c 'cd /cd3user/oci_tools/cd3_automation_toolkit/user-scripts/ && python createTenancyConfig.py $TENANCY_CONFIG_PATH'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to run createTenancyConfig.py for $PREFIX" | tee -a "$LOG_FILE"; exit 1; }
+              echo "createTenancyConfig.py completed for $PREFIX" | tee -a "$LOG_FILE"
+            fi
+            
         - name: Validate config.yaml and Generate service_options.json
           run: |
             LOG_FILE="/tmp/validate_config_$(date +%F_%H-%M-%S).log"
