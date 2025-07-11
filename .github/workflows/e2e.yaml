@@ -135,7 +135,7 @@ jobs:
               VCN_ID_SECRET_OCID: ${{ secrets.VCN_ID_SECRET_OCID }}
               SUBNET_ID_SECRET_OCID: ${{ secrets.SUBNET_ID_SECRET_OCID }}
               SSH_KEY_SECRET_OCID: ${{ secrets.SSH_KEY_SECRET_OCID }}
-              OCI_REGION: us-phoenix-1
+              OCI_REGION: "${{ github.event.inputs.region || 'us-phoenix-1' }}"
         run: |
               set -e
               LOG_FILE="/tmp/secret_retrieval_$(date +%F_%H-%M-%S).log"
@@ -240,7 +240,7 @@ jobs:
       - name: Create Resource Manager Stack
         id: create-stack
         env:
-          OCI_REGION: us-phoenix-1
+          OCI_REGION: "${{ github.event.inputs.region || 'us-phoenix-1' }}"
         run: |
           set -e
           git clone https://github.com/oracle-devrel/cd3-automation-toolkit.git
@@ -268,7 +268,7 @@ jobs:
       - name: Apply Resource Manager Stack
         id: apply-stack
         env:
-          OCI_REGION: us-phoenix-1
+          OCI_REGION: "${{ github.event.inputs.region || 'us-phoenix-1' }}"
         run: |
           set -e
           STACK_ID=${{ steps.create-stack.outputs.stack_id }}
@@ -323,7 +323,7 @@ jobs:
       - name: Get Instance OCID
         id: get-instance-ocid
         env:
-          OCI_REGION: us-phoenix-1
+          OCI_REGION: "${{ github.event.inputs.region || 'us-phoenix-1' }}"
         run: |
           COMPARTMENT_OCID=$(jq -r '.instance_compartment_ocid' $GITHUB_WORKSPACE/variables.json)
           INSTANCE_OCID=$(oci compute instance list \
@@ -352,7 +352,7 @@ jobs:
     if: ${{ github.event.inputs.use_existing_instance != 'true' }}
     runs-on: self-hosted
     env:
-      OCI_REGION: us-phoenix-1
+      OCI_REGION: "${{ github.event.inputs.region || 'us-phoenix-1' }}"
       INSTANCE_NAME: workvm-${{ github.run_id }}
       INSTANCE_IP: ${{ needs.Deploy_RM_Stack.outputs.instance_ip }}
       INSTANCE_OCID: ${{ needs.Deploy_RM_Stack.outputs.instance_ocid }}
@@ -385,7 +385,7 @@ jobs:
           echo "OCI CLI version:" | tee -a "$LOG_FILE"
           oci --version >> "$LOG_FILE" 2>&1
           echo "Checking instance principal authentication..." | tee -a "$LOG_FILE"
-          oci iam compartment list --auth instance_principal --region us-phoenix-1 --query "data[0].id" --raw-output >> "$LOG_FILE" 2>&1 || echo "Instance principal auth failed" | tee -a "$LOG_FILE"
+          oci iam compartment list --auth instance_principal --region "${{ env.OCI_REGION }}" --query "data[0].id" --raw-output >> "$LOG_FILE" 2>&1 || echo "Instance principal auth failed" | tee -a "$LOG_FILE"
           echo "OCI CLI configuration logged to $LOG_FILE"
       - name: Pre-check Secrets Injection
         env:
@@ -641,7 +641,7 @@ jobs:
               fi
             done
             PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
-            REGION="us-phoenix-1"
+            REGION="${{ github.event.inputs.region || 'us-phoenix-1' }}"
             AUTH_MECHANISM="api_key"
             CONTAINER_NAME="cd3_toolkit"
             OUTDIR_STRUCTURE_FILE="/cd3user/oci_tools/cd3_automation_toolkit/user-scripts/outdir_structure_file.properties"
@@ -770,7 +770,7 @@ jobs:
           FINGERPRINT_SECRET_OCID: ${{ secrets.FINGERPRINT_SECRET_OCID }}
           API_SECRET_OCID: ${{ secrets.API_SECRET_OCID }}
           COMPARTMENT_SECRET_OCID: ${{ secrets.COMPARTMENT_SECRET_OCID }}
-          OCI_REGION: us-phoenix-1
+          OCI_REGION: "${{ github.event.inputs.region || 'us-phoenix-1' }}"
         run: |
           LOG_FILE="/tmp/cd3_properties_$(date +%F_%H-%M-%S).log"
           PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
@@ -1403,7 +1403,7 @@ jobs:
       if: ${{ github.event.inputs.use_existing_instance == 'true' }}
       runs-on: self-hosted
       env:
-        OCI_REGION: us-phoenix-1
+        OCI_REGION: "${{ github.event.inputs.region || 'us-phoenix-1' }}"
         INSTANCE_NAME: workvm-${{ github.run_id }}
         INSTANCE_IP: ${{ github.event.inputs.instance_ip  }}
         INSTANCE_OCID: ${{ github.event.inputs.instance_ocid }}
@@ -1442,7 +1442,7 @@ jobs:
             echo "OCI CLI version:" | tee -a "$LOG_FILE"
             oci --version >> "$LOG_FILE" 2>&1
             echo "Checking instance principal authentication..." | tee -a "$LOG_FILE"
-            oci iam compartment list --auth instance_principal --region us-phoenix-1 --query "data[0].id" --raw-output >> "$LOG_FILE" 2>&1 || echo "Instance principal auth failed" | tee -a "$LOG_FILE"
+            oci iam compartment list --auth instance_principal --region "${{ env.OCI_REGION }}" --query "data[0].id" --raw-output >> "$LOG_FILE" 2>&1 || echo "Instance principal auth failed" | tee -a "$LOG_FILE"
             echo "OCI CLI configuration logged to $LOG_FILE"
         - name: Pre-check Secrets Injection
           shell: bash
