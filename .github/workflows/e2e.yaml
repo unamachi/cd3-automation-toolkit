@@ -8,10 +8,10 @@ on:
   workflow_dispatch:
     inputs:
       prefix:
-        description: 'Custom prefix for tenancy config (default: <branch>-<run_id>)'
+        description: 'Prefix for tenancy config (default: <branch>-<run_id>)'
         required: false
       force_update_prefix:
-        description: 'Force update tenancy config for existing prefix (e.g., for new region subscription) (true/false)'
+        description: 'Update tenancy config for existing prefix (e.g., for new region subscription) (true/false)'
         type: boolean
         required: false
         default: false
@@ -19,11 +19,6 @@ on:
           description: 'OCI region (e.g., us-phoenix-1)'
           required: true
           default: 'us-phoenix-1'
-      verify_resources:
-          description: 'Verify created resources (true/false)'
-          type: boolean
-          required: false
-          default: false
       #Changes    
       use_existing_instance:
           description: 'Use existing instance (true/false)'
