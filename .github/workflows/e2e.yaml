@@ -1718,7 +1718,7 @@ jobs:
               region=$OCI_REGION
               key_path=$KEY_DEST_PATH
               outdir=/cd3user/tenancies/$PREFIX/terraform_files
-              outdir_structure_file=/cd3user/tenancies/$PREFIX/${PREFIX}_outdir_structure_file.properties
+              outdir_structure_file=/cd3user/oci_tools/cd3_automation_toolkit/user-scripts/outdir_structure_file.properties
               tf_or_tofu=terraform
               use_remote_state=yes
               auth_mechanism=api_key
