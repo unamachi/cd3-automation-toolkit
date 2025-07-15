@@ -20,14 +20,15 @@
 
 #New one to do export testing
 
-create_resources:
-  enabled: false
-export_resources:
-  enabled: true
-  validate_cd3: false
-  filters:
-  regions: ["phoenix"]
-  compartment_ids: ["Ulag"]
-  operations:
-    - main_option: Export All OCI Resources
-      sub_options: []
+cd3_workflows:
+ create_resources:
+    enabled: false
+ export_resources:
+    enabled: true
+    validate_cd3: false
+    filters:
+      regions: ["phoenix"]
+      compartment_ids: ["Ulag"]
+    operations:
+      - main_option: Export All OCI Resources
+        sub_options: []
