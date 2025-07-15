@@ -2497,7 +2497,8 @@ jobs:
                   PROPERTIES_PATH="/cd3user/tenancies/$PREFIX/config/${PREFIX}_setUpOCI.properties"
                   SERVICE_JSON_PATH="/tmp/service_options.json"
                   CONFIG_PATH="/tmp/config.yaml"
-                  echo "Starting setUpOCI export workflow at $(date)" | tee -a "$LOG_FILE"
+                  TF_BASE_DIR="/cd3user/tenancies/$PREFIX/terraform_files"
+                  echo "Starting setUpOCI export workflow at $(TZ=Asia/Kolkata date)" | tee -a "$LOG_FILE"
                   
                   # Log environment details
                   echo "Environment details:" | tee -a "$LOG_FILE"
@@ -2547,7 +2548,7 @@ jobs:
                   echo "Parsed COMPARTMENT_IDS: $COMPARTMENT_IDS" | tee -a "$LOG_FILE"
                   echo "Parsed TAGS: $TAGS" | tee -a "$LOG_FILE"
                   
-                  # Process main_options, sub_options, and sub_child_options from service_options.json
+                  # Process main_options from service_options.json
                   jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
                     echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
                     # Check if main_option value is an array or object
@@ -2557,6 +2558,7 @@ jobs:
                       cat /tmp/service_options.json >> "$LOG_FILE"
                       exit 1
                     fi
+                    SUB_OPTIONS=""
                     if [ "$IS_ARRAY" = "true" ]; then
                       SUB_OPTIONS=$(jq -r --arg key "$main_option" '.[$key][]' /tmp/service_options.json 2>>"$LOG_FILE" | tr '\n' ',' | sed 's/,$//')
                       if [ $? -ne 0 ]; then
@@ -2564,73 +2566,47 @@ jobs:
                         cat /tmp/service_options.json >> "$LOG_FILE"
                         exit 1
                       fi
-                      if [ -z "$SUB_OPTIONS" ]; then
-                        echo "Warning: No sub-options defined for $main_option, skipping" | tee -a "$LOG_FILE"
-                        continue
-                      fi
-                      echo "Sub-options for $main_option: $SUB_OPTIONS" | tee -a "$LOG_FILE"
-                      # Build --add_filter with correct format
-                      ADD_FILTER=""
-                      if [ -n "$REGIONS" ]; then
-                        ADD_FILTER="reg_filter=,[\"$REGIONS\"],"
-                      fi
-                      if [ -n "$COMPARTMENT_IDS" ]; then
-                        ADD_FILTER="$ADD_FILTER@comp_filter=,[\"$COMPARTMENT_IDS\"],"
-                      fi
-                      if [ -n "$TAGS" ]; then
-                        ADD_FILTER="$ADD_FILTER@tag_filter=,[\"$TAGS\"],"
-                      fi
-                      # Remove trailing comma if present
-                      ADD_FILTER=$(echo "$ADD_FILTER" | sed 's/,$//')
-                      CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 -u setUpOCI.py $PROPERTIES_PATH --devops=true --main_options=\"$main_option\" --sub_options=\"$SUB_OPTIONS\" --add_filter $ADD_FILTER"
-                      echo "Executing setUpOCI command: $CMD" | tee -a "$LOG_FILE"
-                      ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1
-                      EXIT_CODE=$?
-                      if [ $EXIT_CODE -ne 0 ]; then
-                        echo "Error: setUpOCI command failed for main_option=$main_option with exit code $EXIT_CODE" | tee -a "$LOG_FILE"
-                        cat "$LOG_FILE"
-                        exit $EXIT_CODE
-                      fi
                     else
-                      jq -r --arg key "$main_option" '.[$key] | to_entries[] | .key' /tmp/service_options.json 2>>"$LOG_FILE" | while read -r sub_option; do
-                        echo "Processing sub_option: $sub_option for $main_option" | tee -a "$LOG_FILE"
-                        SUB_CHILD_OPTIONS=$(jq -r --arg key "$main_option" --arg subkey "$sub_option" '.[$key][$subkey][]' /tmp/service_options.json 2>>"$LOG_FILE" | tr '\n' ',' | sed 's/,$//')
-                        if [ $? -ne 0 ]; then
-                          echo "Error: Failed to extract sub-child-options for $main_option:$sub_option" | tee -a "$LOG_FILE"
-                          cat /tmp/service_options.json >> "$LOG_FILE"
-                          exit 1
-                        fi
-                        echo "Sub-child-options for $main_option:$sub_option: $SUB_CHILD_OPTIONS" | tee -a "$LOG_FILE"
-                        # Build --add_filter with correct format
-                        ADD_FILTER=""
-                        if [ -n "$REGIONS" ]; then
-                          ADD_FILTER="reg_filter=,[\"$REGIONS\"],"
-                        fi
-                        if [ -n "$COMPARTMENT_IDS" ]; then
-                          ADD_FILTER="$ADD_FILTER@comp_filter=,[\"$COMPARTMENT_IDS\"],"
-                        fi
-                        if [ -n "$TAGS" ]; then
-                          ADD_FILTER="$ADD_FILTER@tag_filter=,[\"$TAGS\"],"
-                        fi
-                        # Remove trailing comma if present
-                        ADD_FILTER=$(echo "$ADD_FILTER" | sed 's/,$//')
-                        CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 -u setUpOCI.py $PROPERTIES_PATH --devops=true --main_options=\"$main_option\" --sub_options=\"$sub_option\""
-                        if [ -n "$SUB_CHILD_OPTIONS" ]; then
-                          CMD="$CMD --sub_child_options=\"$SUB_CHILD_OPTIONS\""
-                        fi
-                        if [ -n "$ADD_FILTER" ]; then
-                          CMD="$CMD --add_filter $ADD_FILTER"
-                        fi
-                        echo "Executing setUpOCI command: $CMD" | tee -a "$LOG_FILE"
-                        ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" >> "$LOG_FILE" 2>&1
-                        EXIT_CODE=$?
-                        if [ $EXIT_CODE -ne 0 ]; then
-                          echo "Error: setUpOCI command failed for main_option=$main_option, sub_option=$sub_option with exit code $EXIT_CODE" | tee -a "$LOG_FILE"
-                          cat "$LOG_FILE"
-                          exit $EXIT_CODE
-                        fi
-                      done
+                      SUB_OPTIONS=$(jq -r --arg key "$main_option" '.[$key] | to_entries[] | .key' /tmp/service_options.json 2>>"$LOG_FILE" | tr '\n' ',' | sed 's/,$//')
+                      if [ $? -ne 0 ]; then
+                        echo "Error: Failed to extract sub-options for $main_option" | tee -a "$LOG_FILE"
+                        cat /tmp/service_options.json >> "$LOG_FILE"
+                        exit 1
+                      fi
                     fi
+                    echo "Sub-options for $main_option: $SUB_OPTIONS" | tee -a "$LOG_FILE"
+                    # Build --add_filter with correct format
+                    ADD_FILTER=""
+                    if [ -n "$REGIONS" ]; then
+                      ADD_FILTER="reg_filter=,[$([ "$REGIONS" = "phoenix" ] && echo "\"$REGIONS\"" || echo "\"$REGIONS\"")],"
+                    fi
+                    if [ -n "$COMPARTMENT_IDS" ]; then
+                      ADD_FILTER="${ADD_FILTER}@,comp_filter=,[\"$COMPARTMENT_IDS\"],"
+                    fi
+                    if [ -n "$TAGS" ]; then
+                      ADD_FILTER="${ADD_FILTER}@,tag_filter=,[\"$TAGS\"],"
+                    fi
+                    # Remove trailing comma
+                    ADD_FILTER=$(echo "$ADD_FILTER" | sed 's/,$//')
+                    # Construct command
+                    CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 -u setUpOCI.py $PROPERTIES_PATH --devops=true --main_options=\"$main_option\" --sub_options=\"$SUB_OPTIONS\""
+                    if [ -n "$ADD_FILTER" ]; then
+                      CMD="$CMD --add_filter $ADD_FILTER"
+                    fi
+                    echo "Executing setUpOCI command: $CMD" | tee -a "$LOG_FILE"
+                    # Execute and capture stdout/stderr
+                    ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c '$CMD'" > /tmp/setupoci_output.txt 2>&1
+                    EXIT_CODE=$?
+                    echo "setUpOCI stdout/stderr for main_option=$main_option:" | tee -a "$LOG_FILE"
+                    cat /tmp/setupoci_output.txt >> "$LOG_FILE"
+                    if [ $EXIT_CODE -ne 0 ]; then
+                      echo "Error: setUpOCI command failed for main_option=$main_option with exit code $EXIT_CODE" | tee -a "$LOG_FILE"
+                      cat "$LOG_FILE"
+                      exit $EXIT_CODE
+                    fi
+                    # Check generated files in service directories
+                    echo "Checking generated files for main_option: $main_option" | tee -a "$LOG_FILE"
+                    ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME find $TF_BASE_DIR/$REGIONS -maxdepth 2 -type f \( -name '*.tfvars' -o -name '*.sh' \)" >>"$LOG_FILE" 2>&1 || { echo "Warning: Failed to list generated files in $TF_BASE_DIR/$REGIONS" | tee -a "$LOG_FILE"; }
                     echo "Workflow completed for main_option: $main_option" | tee -a "$LOG_FILE"
                   done
                   echo "setUpOCI export workflow completed successfully" | tee -a "$LOG_FILE"
