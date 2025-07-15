@@ -2261,10 +2261,16 @@ jobs:
                 fi
                 echo "Contents of /tmp/service_options.json:" | tee -a "$LOG_FILE"
                 cat /tmp/service_options.json >> "$LOG_FILE" 2>&1
-                SERVICES=$(jq -r 'keys[] | select(startswith("Export "))' /tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to parse service_options.json with jq" | tee -a "$LOG_FILE"; exit 1; })
-                if [ -z "$SERVICES" ]; then
-                  echo "Warning: No export services found in service_options.json, skipping" | tee -a "$LOG_FILE"
-                  exit 0
+                # Check if service_options.json contains Export All OCI Resources as a single key
+                if jq -e '."Export All OCI Resources"' /tmp/service_options.json >/dev/null 2>>"$LOG_FILE"; then
+                  echo "Export All OCI Resources detected in service_options.json, processing all services" | tee -a "$LOG_FILE"
+                  SERVICES=("${!MAIN_OPTION_TO_SERVICE[@]}")
+                else
+                  SERVICES=$(jq -r 'keys[] | select(startswith("Export "))' /tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to parse service_options.json with jq" | tee -a "$LOG_FILE"; exit 1; })
+                  if [ -z "$SERVICES" ]; then
+                    echo "Warning: No export services found in service_options.json, skipping" | tee -a "$LOG_FILE"
+                    exit 0
+                  fi
                 fi
               fi
               # Process services
@@ -2418,17 +2424,23 @@ jobs:
                 fi
                 echo "Contents of /tmp/service_options.json:" | tee -a "$LOG_FILE"
                 cat /tmp/service_options.json >> "$LOG_FILE" 2>&1
-                SERVICES=$(jq -r 'keys[]' /tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to parse service_options.json with jq" | tee -a "$LOG_FILE"; exit 1; })
-                if [ -z "$SERVICES" ]; then
-                  echo "Warning: No services found in service_options.json, skipping" | tee -a "$LOG_FILE"
-                  exit 0
+                # Check if service_options.json contains Export All OCI Resources as a single key
+                if jq -e '."Export All OCI Resources"' /tmp/service_options.json >/dev/null 2>>"$LOG_FILE"; then
+                  echo "Export All OCI Resources detected in service_options.json, processing all services" | tee -a "$LOG_FILE"
+                  SERVICES=("${!MAIN_OPTION_TO_SERVICE[@]}")
+                else
+                  SERVICES=$(jq -r 'keys[] | select(startswith("Export "))' /tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to parse service_options.json with jq" | tee -a "$LOG_FILE"; exit 1; })
+                  if [ -z "$SERVICES" ]; then
+                    echo "Warning: No export services found in service_options.json, skipping" | tee -a "$LOG_FILE"
+                    exit 0
+                  fi
                 fi
               fi
               # Process each main_option
               for main_option in $SERVICES; do
                 echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
                 # Map main_option to OCI Service Name
-                SERVICE_NAME="${MAIN_OPTION_TO_SERVICE[$main_option]}"
+                SERVICE_NAME="${MAIN_OPTION_TO_SERVICE[$main司机option]}"
                 if [ -z "$SERVICE_NAME" ]; then
                   echo "Warning: No service mapping found for $main_option in MAIN_OPTION_TO_SERVICE, skipping" | tee -a "$LOG_FILE"
                   continue
