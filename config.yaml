@@ -8,6 +8,7 @@ cd3_workflows:
     filters:
       regions: ["phoenix"]
       compartment_ids: ["Ulag"]
+      tags: []
     operations:
       - main_option: Export All OCI Resources
         sub_options: []
