@@ -1009,7 +1009,7 @@ jobs:
                   if main_option:
                       service_options[main_option] = {}
                       for i, sub_option in enumerate(sub_options):
-                          child_options = sub_child_options[i] if i < len(sub_child_options) else []
+                          child_options = sub_child_options[i] if i < len(sub_child_options) and sub_child_options[i] is not None else []
                           service_options[main_option][sub_option] = child_options
               with open(output_path, 'w') as f:
                   json.dump(service_options, f, indent=2)
@@ -1334,181 +1334,495 @@ jobs:
           ls -l "$LOCAL_DIR" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list exported files" | tee -a "$LOG_FILE"; exit 1; }
           echo "Retrieve Exported Files completed successfully" | tee -a "$LOG_FILE"
 
+      - name: Run Shell Scripts in Changed Terraform Service Directories
+        if: steps.validate_workflow.outputs.export_resources_enabled == 'true'
+        run: |
+                  LOG_FILE="/tmp/cd3_shell_scripts_$(TZ=Asia/Kolkata date +%F_%H-%M-%S).log"
+                  CONTAINER_NAME="cd3_toolkit"
+                  PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+                  REGION="${{ github.event.inputs.region || 'us-phoenix-1' }}"
+                  OUTDIR_STRUCTURE_FILE="/cd3user/tenancies/$PREFIX/${PREFIX}_outdir_structure_file.properties"
+                  OCI_REGIONS_FILE="/cd3user/oci_tools/cd3_automation_toolkit/OCI_Regions"
+                  TF_BASE_DIR="/cd3user/tenancies/$PREFIX/terraform_files"
+                  echo "Starting shell script execution for prefix: $PREFIX at $(date)" | tee -a "$LOG_FILE"
+                  # Validate INSTANCE_IP
+                  if [ -z "${{ env.INSTANCE_IP }}" ]; then
+                    echo "Error: INSTANCE_IP is empty" | tee -a "$LOG_FILE"
+                    exit 1
+                  fi
+                  # Get short region key
+                  SHORT_REGION=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OCI_REGIONS_FILE | grep \":$REGION\" | cut -d: -f1'") 2>>"$LOG_FILE"
+                  if [ -z "$SHORT_REGION" ]; then
+                    echo "Error: Failed to find short region key for $REGION in $OCI_REGIONS_FILE" | tee -a "$LOG_FILE"
+                    exit 1
+                  fi
+                  echo "Mapped region $REGION to short key $SHORT_REGION" | tee -a "$LOG_FILE"
+                  # Validate service_options.json
+                  if [ ! -f /tmp/service_options.json ]; then
+                    echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
+                    exit 1
+                  fi
+                  echo "Contents of /tmp/service_options.json:" | tee -a "$LOG_FILE"
+                  cat /tmp/service_options.json >> "$LOG_FILE" 2>&1
+                  # Check if outdir_structure_file.properties exists
+                  USE_OUTDIR_STRUCTURE=false
+                  if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME test -f $OUTDIR_STRUCTURE_FILE" 2>>"$LOG_FILE"; then
+                    USE_OUTDIR_STRUCTURE=true
+                    echo "Outdir structure enabled: true" | tee -a "$LOG_FILE"
+                    echo "Contents of $OUTDIR_STRUCTURE_FILE:" | tee -a "$LOG_FILE"
+                    ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME cat $OUTDIR_STRUCTURE_FILE" >>"$LOG_FILE" 2>&1
+                  else
+                    echo "Outdir structure enabled: false" | tee -a "$LOG_FILE"
+                  fi
+                  # Define mapping from main_option to OCI Service Name
+                  declare -A MAIN_OPTION_TO_SERVICE
+                  MAIN_OPTION_TO_SERVICE["Export Identity"]="identity"
+                  MAIN_OPTION_TO_SERVICE["Export Governance"]="tagging"
+                  MAIN_OPTION_TO_SERVICE["Export Cost Management"]="budget"
+                  MAIN_OPTION_TO_SERVICE["Export Network"]="network"
+                  MAIN_OPTION_TO_SERVICE["Export OCI Firewall"]="firewall"
+                  MAIN_OPTION_TO_SERVICE["Export DNS Management"]="dns"
+                  MAIN_OPTION_TO_SERVICE["Export Compute"]="instance"
+                  MAIN_OPTION_TO_SERVICE["Export Storage"]="block-volume"
+                  MAIN_OPTION_TO_SERVICE["Export Databases"]="dbsystem-vm-bm"
+                  MAIN_OPTION_TO_SERVICE["Export Load Balancers"]="loadbalancer"
+                  MAIN_OPTION_TO_SERVICE["Export Management Services"]="managementservices"
+                  MAIN_OPTION_TO_SERVICE["Export Developer Services"]="oke"
+                  MAIN_OPTION_TO_SERVICE["Export Security"]="kms"
+                  MAIN_OPTION_TO_SERVICE["Export Software-Defined Data Centers - OCVS"]="sddc"
+                  # Define sub-option to service name mapping using full sub-option names
+                  declare -A SUB_OPTION_TO_SERVICE
+                  SUB_OPTION_TO_SERVICE["Export Governance:Export Tags"]="tagging"
+                  SUB_OPTION_TO_SERVICE["Export Governance:Export Quotas"]="quota"
+                  SUB_OPTION_TO_SERVICE["Export Cost Management:Export Budgets"]="budget"
+                  SUB_OPTION_TO_SERVICE["Export Network:Export Network components for NSGs Tab"]="nsg"
+                  SUB_OPTION_TO_SERVICE["Export Storage:Export Block Volumes/Block Backup Policy"]="block-volume"
+                  SUB_OPTION_TO_SERVICE["Export Storage:Export File Systems"]="fss"
+                  SUB_OPTION_TO_SERVICE["Export Storage:Export Object Storage Buckets"]="object-storage"
+                  SUB_OPTION_TO_SERVICE["Export Databases:Export Virtual Machine or Bare Metal DB Systems"]="dbsystem-vm-bm"
+                  SUB_OPTION_TO_SERVICE["Export Databases:Export EXA Infra and EXA VMClusters"]="database-exacs"
+                  SUB_OPTION_TO_SERVICE["Export Databases:Export ADBs"]="adb"
+                  SUB_OPTION_TO_SERVICE["Export Databases:Export MySQL DBs"]="mysql-dbsystem"
+                  SUB_OPTION_TO_SERVICE["Export Load Balancers:Export Network Load Balancers"]="networkloadbalancer"
+                  SUB_OPTION_TO_SERVICE["Export Compute:Export Dedicated VM Hosts"]="dedicated-vm-host"
+                  SUB_OPTION_TO_SERVICE["Export Compute:Export Instances"]="instance"
+                  # Check if Export All OCI Resources is in config.yaml or service_options.json
+                  EXPORT_ALL_CONFIG=$(yq e '.export_resources.operations[] | select(.main_option == "Export All OCI Resources")' config.yaml 2>>"$LOG_FILE" || echo "")
+                  if [ -n "$EXPORT_ALL_CONFIG" ] || ( [ -f /tmp/service_options.json ] && jq -e '."Export All OCI Resources"' /tmp/service_options.json >/dev/null 2>>"$LOG_FILE" ); then
+                    echo "Export All OCI Resources detected, processing all services" | tee -a "$LOG_FILE"
+                    SERVICES=("${!MAIN_OPTION_TO_SERVICE[@]}")
+                  else
+                    if [ ! -f /tmp/service_options.json ] || ! jq -e . /tmp/service_options.json >/dev/null 2>>"$LOG_FILE"; then
+                      echo "Error: /tmp/service_options.json does not exist or is invalid JSON" | tee -a "$LOG_FILE"
+                      exit 1
+                    fi
+                    SERVICES=$(jq -r 'keys[] | select(startswith("Export "))' /tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to parse service_options.json with jq" | tee -a "$LOG_FILE"; exit 1; })
+                    if [ -z "$SERVICES" ]; then
+                      echo "Warning: No export services found in service_options.json, skipping" | tee -a "$LOG_FILE"
+                      exit 0
+                    fi
+                  fi
+                  # Process services
+                  for main_option in "${SERVICES[@]}"; do
+                    echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
+                    # Check if main_option has sub-options in service_options.json
+                    SUB_OPTIONS=$(jq -r --arg key "$main_option" '.[$key] | if type == "array" then .[] else (.[keys[]] // []) | .[] end' /tmp/service_options.json 2>>"$LOG_FILE" | tr '\n' ',' | sed 's/,$//')
+                    if [ $? -ne 0 ]; then
+                      echo "Error: Failed to extract sub-options for $main_option" | tee -a "$LOG_FILE"
+                      exit 1
+                    fi
+                    if [ -z "$SUB_OPTIONS" ]; then
+                      # No sub-options, use main_option mapping
+                      SERVICE_NAME="${MAIN_OPTION_TO_SERVICE[$main_option]}"
+                      if [ -z "$SERVICE_NAME" ]; then
+                        echo "Warning: No service mapping found for $main_option, skipping" | tee -a "$LOG_FILE"
+                        continue
+                      fi
+                      echo "Mapped main_option $main_option to OCI Service Name $SERVICE_NAME (no sub-options)" | tee -a "$LOG_FILE"
+                      # Get service directory
+                      if [ "$USE_OUTDIR_STRUCTURE" = true ]; then
+                        SERVICE_DIR=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OUTDIR_STRUCTURE_FILE | grep -i \"^$SERVICE_NAME=\" | cut -d= -f2'") 2>>"$LOG_FILE"
+                        if [ -z "$SERVICE_DIR" ]; then
+                          echo "Warning: No directory mapping found for $SERVICE_NAME in $OUTDIR_STRUCTURE_FILE, skipping $main_option" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        echo "Mapped $SERVICE_NAME to directory $SERVICE_DIR" | tee -a "$LOG_FILE"
+                        TF_DIR="$TF_BASE_DIR/$SHORT_REGION/$SERVICE_DIR"
+                      else
+                        TF_DIR="$TF_BASE_DIR/$SHORT_REGION"
+                      fi
+                      # Process directory
+                      if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
+                        echo "Warning: Directory $TF_DIR does not exist, skipping $main_option" | tee -a "$LOG_FILE"
+                        continue
+                      fi
+                      # Check for recently modified files
+                      CHANGED_FILES=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME find $TF_DIR -maxdepth 1 -type f -mmin -60" 2>>"$LOG_FILE")
+                      if [ -z "$CHANGED_FILES" ]; then
+                        echo "No recently modified files in $TF_DIR for $main_option, skipping" | tee -a "$LOG_FILE"
+                        continue
+                      fi
+                      echo "Found recently modified files in $TF_DIR: $CHANGED_FILES" | tee -a "$LOG_FILE"
+                      # Find and execute .sh scripts
+                      SCRIPTS=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME find $TF_DIR -maxdepth 1 -type f -name '*.sh'" 2>>"$LOG_FILE" || { echo "Error: Failed to list .sh scripts in $TF_DIR" | tee -a "$LOG_FILE"; exit 1; })
+                      if [ -z "$SCRIPTS" ]; then
+                        echo "No shell scripts found in $TF_DIR for $main_option" | tee -a "$LOG_FILE"
+                        continue
+                      fi
+                      for SCRIPT in $SCRIPTS; do
+                        echo "Executing script: $SCRIPT for $main_option" | tee -a "$LOG_FILE"
+                        ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && chmod +x $SCRIPT && ./$(basename $SCRIPT)'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to execute $SCRIPT for $main_option" | tee -a "$LOG_FILE"; exit 1; }
+                        echo "Successfully executed $SCRIPT for $main_option" | tee -a "$LOG_FILE"
+                      done
+                    else
+                      # Process sub-options
+                      IFS=',' read -ra SUB_OPTION_ARRAY <<< "$SUB_OPTIONS"
+                      for sub_option in "${SUB_OPTION_ARRAY[@]}"; do
+                        echo "Processing sub_option: $sub_option for $main_option" | tee -a "$LOG_FILE"
+                        # Check sub-option mapping
+                        SUB_KEY="${main_option}:${sub_option}"
+                        SERVICE_NAME="${SUB_OPTION_TO_SERVICE[$SUB_KEY]:-${MAIN_OPTION_TO_SERVICE[$main_option]}}"
+                        if [ -z "$SERVICE_NAME" ]; then
+                          echo "Warning: No service mapping found for $SUB_KEY or $main_option, skipping" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        echo "Mapped $SUB_KEY to OCI Service Name $SERVICE_NAME" | tee -a "$LOG_FILE"
+                        # Get service directory
+                        if [ "$USE_OUTDIR_STRUCTURE" = true ]; then
+                          SERVICE_DIR=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OUTDIR_STRUCTURE_FILE | grep -i \"^$SERVICE_NAME=\" | cut -d= -f2'") 2>>"$LOG_FILE"
+                          if [ -z "$SERVICE_DIR" ]; then
+                            echo "Warning: No directory mapping found for $SERVICE_NAME in $OUTDIR_STRUCTURE_FILE, skipping $SUB_KEY" | tee -a "$LOG_FILE"
+                            continue
+                          fi
+                          echo "Mapped $SERVICE_NAME to directory $SERVICE_DIR" | tee -a "$LOG_FILE"
+                          TF_DIR="$TF_BASE_DIR/$SHORT_REGION/$SERVICE_DIR"
+                        else
+                          TF_DIR="$TF_BASE_DIR/$SHORT_REGION"
+                        fi
+                        # Process directory
+                        if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
+                          echo "Warning: Directory $TF_DIR does not exist, skipping $SUB_KEY" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        # Check for recently modified files
+                        CHANGED_FILES=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME find $TF_DIR -maxdepth 1 -type f -mmin -60" 2>>"$LOG_FILE")
+                        if [ -z "$CHANGED_FILES" ]; then
+                          echo "No recently modified files in $TF_DIR for $SUB_KEY, skipping" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        echo "Found recently modified files in $TF_DIR: $CHANGED_FILES" | tee -a "$LOG_FILE"
+                        # Find and execute .sh scripts
+                        SCRIPTS=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME find $TF_DIR -maxdepth 1 -type f -name '*.sh'" 2>>"$LOG_FILE" || { echo "Error: Failed to list .sh scripts in $TF_DIR" | tee -a "$LOG_FILE"; exit 1; })
+                        if [ -z "$SCRIPTS" ]; then
+                          echo "No shell scripts found in $TF_DIR for $SUB_KEY" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        for SCRIPT in $SCRIPTS; do
+                          echo "Executing script: $SCRIPT for $SUB_KEY" | tee -a "$LOG_FILE"
+                          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && chmod +x $SCRIPT && ./$(basename $SCRIPT)'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to execute $SCRIPT for $SUB_KEY" | tee -a "$LOG_FILE"; exit 1; }
+                          echo "Successfully executed $SCRIPT for $SUB_KEY" | tee -a "$LOG_FILE"
+                        done
+                      done
+                    fi
+                    echo "Processing completed for main_option: $main_option" | tee -a "$LOG_FILE"
+                  done
+                  echo "Shell script execution completed for prefix: $PREFIX" | tee -a "$LOG_FILE"       
+
+
       - name: Apply Terraform Configurations for Services
         if: always()
         run: |
-            # Set environment variables
-            LOG_FILE="/tmp/cd3_terraform_apply_$(date +%F_%H-%M-%S).log"
-            touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
-            echo "Starting Apply Terraform Configurations step at $(date)" | tee -a "$LOG_FILE"
-            PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
-            CONTAINER_NAME="cd3_toolkit"
-            REGION="${{ github.event.inputs.region || 'us-phoenix-1' }}"
-            OUTDIR_STRUCTURE_FILE="/cd3user/tenancies/$PREFIX/${PREFIX}_outdir_structure_file.properties"
-            OCI_REGIONS_FILE="/cd3user/oci_tools/cd3_automation_toolkit/OCI_Regions"
-        
-            # Get workflow type
-            WF_TYPE=$(grep "workflow_type" /tmp/${PREFIX}_setUpOCI.properties | cut -d= -f2 | tr -d '[:space:]')
-            if [ -z "$WF_TYPE" ]; then
-              echo "Error: Workflow type not set in properties file" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            echo "Workflow type: $WF_TYPE" | tee -a "$LOG_FILE"
-        
-            # Validate INSTANCE_IP
-            if [ -z "${{ env.INSTANCE_IP }}" ]; then
-              echo "Error: INSTANCE_IP is empty" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-        
-            # Get short region key
-            SHORT_REGION=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OCI_REGIONS_FILE | grep \":$REGION\" | cut -d: -f1'") 2>>"$LOG_FILE"
-            if [ -z "$SHORT_REGION" ]; then
-              echo "Error: Failed to find short region key for $REGION in $OCI_REGIONS_FILE" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-            echo "Mapped region $REGION to short key $SHORT_REGION" | tee -a "$LOG_FILE"
-        
-            # Validate service_options.json
-            if [ ! -f /tmp/service_options.json ]; then
-              echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
-              exit 1
-            fi
-        
-            # Check if outdir_structure_file.properties exists
-            USE_OUTDIR_STRUCTURE=false
-            if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME test -f $OUTDIR_STRUCTURE_FILE" 2>>"$LOG_FILE"; then
-              USE_OUTDIR_STRUCTURE=true
-              echo "Outdir structure enabled: true" | tee -a "$LOG_FILE"
-            else
-              echo "Outdir structure enabled: false" | tee -a "$LOG_FILE"
-            fi
-        
-        
-            # Create directory for Terraform plans
-            mkdir -p /tmp/terraform_plans || { echo "Error: Failed to create /tmp/terraform_plans" | tee -a "$LOG_FILE"; exit 1; }
-        
-            # Define mapping from main_option to OCI Service Name
-            declare -A MAIN_OPTION_TO_SERVICE
-
-            # === Create Workflow Options ===
-            MAIN_OPTION_TO_SERVICE["Identity"]="identity"
-            MAIN_OPTION_TO_SERVICE["Governance"]="tagging"
-            MAIN_OPTION_TO_SERVICE["Cost Management"]="budget"
-            MAIN_OPTION_TO_SERVICE["Network"]="network"
-            MAIN_OPTION_TO_SERVICE["OCI Firewall"]="firewall"
-            MAIN_OPTION_TO_SERVICE["DNS Management"]="dns"
-            MAIN_OPTION_TO_SERVICE["Compute"]="instance"
-            MAIN_OPTION_TO_SERVICE["Storage"]="block_volume"
-            MAIN_OPTION_TO_SERVICE["Database"]="dbsystem_vm_bm"
-            MAIN_OPTION_TO_SERVICE["Load Balancers"]="loadbalancer"
-            MAIN_OPTION_TO_SERVICE["Management Services"]="managementservices"
-            MAIN_OPTION_TO_SERVICE["Developer Services"]="oke"
-            MAIN_OPTION_TO_SERVICE["Security"]="kms"
-            MAIN_OPTION_TO_SERVICE["Logging Services"]="logging"
-            MAIN_OPTION_TO_SERVICE["Software-Defined Data Centers - OCVS"]="sddc"
-
-            MAIN_OPTION_TO_SERVICE["CD3 Services"]="identity"
-            MAIN_OPTION_TO_SERVICE["Export Compute"]="instance"
-            MAIN_OPTION_TO_SERVICE["Export Identity"]="identity"
-            MAIN_OPTION_TO_SERVICE["Export Governance"]="tagging"
-            MAIN_OPTION_TO_SERVICE["Export Cost Management"]="budget"
-            MAIN_OPTION_TO_SERVICE["Export Network"]="network"
-            MAIN_OPTION_TO_SERVICE["Export OCI Firewall"]="firewall"
-            MAIN_OPTION_TO_SERVICE["Export DNS Management"]="dns"
-            MAIN_OPTION_TO_SERVICE["Export Storage"]="block_volume"
-            MAIN_OPTION_TO_SERVICE["Export Databases"]="dbsystem_vm_bm"
-            MAIN_OPTION_TO_SERVICE["Export Load Balancers"]="loadbalancer"
-            MAIN_OPTION_TO_SERVICE["Export Management Services"]="managementservices"
-            MAIN_OPTION_TO_SERVICE["Export Developer Services"]="oke"
-            MAIN_OPTION_TO_SERVICE["Export Security"]="kms"
-            MAIN_OPTION_TO_SERVICE["Export Software-Defined Data Centers - OCVS"]="sddc"
-        
-            # Process each main_option from service_options.json
-            jq -r 'keys[]' /tmp/service_options.json | while read -r main_option; do
-              echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
-        
-              # Map main_option to OCI Service Name
-              SERVICE_NAME="${MAIN_OPTION_TO_SERVICE[$main_option]}"
-              if [ -z "$SERVICE_NAME" ]; then
-                echo "Warning: No service mapping found for $main_option in MAIN_OPTION_TO_SERVICE, skipping" | tee -a "$LOG_FILE"
-                continue
-              fi
-              echo "Mapped main_option $main_option to OCI Service Name $SERVICE_NAME" | tee -a "$LOG_FILE"
-        
-              # Get service directory
-              if [ "$USE_OUTDIR_STRUCTURE" = true ]; then
-                SERVICE_DIR=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OUTDIR_STRUCTURE_FILE | grep -i \"^$SERVICE_NAME=\" | cut -d= -f2'") 2>>"$LOG_FILE"
-                if [ -z "$SERVICE_DIR" ]; then
-                  echo "Warning: No directory mapping found for $SERVICE_NAME in $OUTDIR_STRUCTURE_FILE, skipping $main_option" | tee -a "$LOG_FILE"
-                  continue
-                fi
-                echo "Mapped $SERVICE_NAME to directory $SERVICE_DIR" | tee -a "$LOG_FILE"
-                TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION/$SERVICE_DIR"
-              else
-                TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION"
-              fi
-        
-        
-              # Check if TF_DIR exists
-              if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
-                echo "Warning: Directory $TF_DIR does not exist, skipping $main_option" | tee -a "$LOG_FILE"
-                continue
-              fi
-        
-              # Find latest .tfvars file
-              LATEST_TFVARS=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'ls -t $TF_DIR/*.tfvars 2>/dev/null | head -n 1'") 2>>"$LOG_FILE"
-              if [ -z "$LATEST_TFVARS" ]; then
-                echo "Warning: No .tfvars files found in $TF_DIR, skipping $main_option" | tee -a "$LOG_FILE"
-                continue
-              fi
-              echo "Latest .tfvars file: $LATEST_TFVARS" | tee -a "$LOG_FILE"
-        
-              # Check if .tfvars file is recent (within 1 hour)
-              if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'find $LATEST_TFVARS -mmin -60'" 2>>"$LOG_FILE"; then
-                echo "Warning: $LATEST_TFVARS is older than 1 hour, skipping $main_option" | tee -a "$LOG_FILE"
-                continue
-              fi
-        
-              # Set Terraform commands based on WF_TYPE
-              if [ "$WF_TYPE" = "export_resources" ]; then
-                COMMANDS=("init" "plan -var-file=$LATEST_TFVARS -out=tfplan")
-              else
-                COMMANDS=("init" "plan -var-file=$LATEST_TFVARS -out=tfplan" "apply tfplan")
-              fi
-        
-              # Execute Terraform commands with retries
-              for cmd in "${COMMANDS[@]}"; do
-                RETRY_COUNT=0
-                MAX_RETRIES=3
-                until ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform $cmd'" >> "$LOG_FILE" 2>&1; do
-                  RETRY_COUNT=$((RETRY_COUNT + 1))
-                  if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-                    echo "Error: Terraform $cmd failed for $main_option after $MAX_RETRIES retries, continuing" | tee -a "$LOG_FILE"
-                    break
+                  # Set environment variables
+                  LOG_FILE="/tmp/cd3_terraform_apply_$(TZ=Asia/Kolkata date +%F_%H-%M-%S).log"
+                  touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
+                  echo "Starting Apply Terraform Configurations step at $(date)" | tee -a "$LOG_FILE"
+                  PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+                  CONTAINER_NAME="cd3_toolkit"
+                  REGION="${{ github.event.inputs.region || 'us-phoenix-1' }}"
+                  OUTDIR_STRUCTURE_FILE="/cd3user/tenancies/$PREFIX/${PREFIX}_outdir_structure_file.properties"
+                  OCI_REGIONS_FILE="/cd3user/oci_tools/cd3_automation_toolkit/OCI_Regions"
+              
+                  # Get workflow type
+                  WF_TYPE=$(grep "workflow_type" /tmp/${PREFIX}_setUpOCI.properties | cut -d= -f2 | tr -d '[:space:]')
+                  if [ -z "$WF_TYPE" ]; then
+                    echo "Error: Workflow type not set in properties file" | tee -a "$LOG_FILE"
+                    exit 1
                   fi
-                  echo "Retrying terraform $cmd for $main_option (attempt $((RETRY_COUNT + 1)))" | tee -a "$LOG_FILE"
-                  sleep 120
-                done
-                if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-                  break
-                fi
-                if [ "$cmd" = "plan -var-file=$LATEST_TFVARS -out=tfplan" ] && [ "$WF_TYPE" = "export_resources" ]; then
-                  PLAN_FILE="/tmp/terraform_plans/${main_option}_tfplan_$(date +%F_%H-%M-%S).txt"
-                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform show -no-color tfplan'" > "$PLAN_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to save terraform plan for $main_option" | tee -a "$LOG_FILE"; exit 1; }
-                  echo "Terraform plan saved to $PLAN_FILE for $main_option" | tee -a "$LOG_FILE"
-                fi
-              done
-              if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-                continue
-              fi
-              if [ "$WF_TYPE" = "create_resources" ]; then
-                echo "Terraform apply completed for $main_option" | tee -a "$LOG_FILE"
-              else
-                echo "Terraform plan completed for $main_option (export_resources mode)" | tee -a "$LOG_FILE"
-              fi
-            done
-            echo "Terraform configurations processed successfully" | tee -a "$LOG_FILE"
+                  echo "Workflow type: $WF_TYPE" | tee -a "$LOG_FILE"
+              
+                  # Validate INSTANCE_IP
+                  if [ -z "$INSTANCE_IP" ]; then
+                    echo "Error: INSTANCE_IP is empty" | tee -a "$LOG_FILE"
+                    exit 1
+                  fi
+              
+                  # Get short region key
+                  SHORT_REGION=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OCI_REGIONS_FILE | grep \":$REGION\" | cut -d: -f1'") 2>>"$LOG_FILE"
+                  if [ -z "$SHORT_REGION" ]; then
+                    echo "Error: Failed to find short region key for $REGION in $OCI_REGIONS_FILE" | tee -a "$LOG_FILE"
+                    exit 1
+                  fi
+                  echo "Mapped region $REGION to short key $SHORT_REGION" | tee -a "$LOG_FILE"
+              
+                  # Validate service_options.json
+                  if [ ! -f /tmp/service_options.json ]; then
+                    echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
+                    exit 1
+                  fi
+                  echo "Contents of /tmp/service_options.json:" | tee -a "$LOG_FILE"
+                  cat /tmp/service_options.json >> "$LOG_FILE" 2>&1
+              
+                  # Check if outdir_structure_file.properties exists
+                  USE_OUTDIR_STRUCTURE=false
+                  if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME test -f $OUTDIR_STRUCTURE_FILE" 2>>"$LOG_FILE"; then
+                    USE_OUTDIR_STRUCTURE=true
+                    echo "Outdir structure enabled: true" | tee -a "$LOG_FILE"
+                    echo "Contents of $OUTDIR_STRUCTURE_FILE:" | tee -a "$LOG_FILE"
+                    ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME cat $OUTDIR_STRUCTURE_FILE" >>"$LOG_FILE" 2>&1
+                  else
+                    echo "Outdir structure enabled: false" | tee -a "$LOG_FILE"
+                  fi
+              
+                  # Create directory for Terraform plans
+                  mkdir -p /tmp/terraform_plans || { echo "Error: Failed to create /tmp/terraform_plans" | tee -a "$LOG_FILE"; exit 1; }
+              
+                  # Define mapping from main_option to OCI Service Name
+                  declare -A MAIN_OPTION_TO_SERVICE
+                  # === Create Workflow Options ===
+                  MAIN_OPTION_TO_SERVICE["Identity"]="identity"
+                  MAIN_OPTION_TO_SERVICE["Governance"]="tagging"
+                  MAIN_OPTION_TO_SERVICE["Cost Management"]="budget"
+                  MAIN_OPTION_TO_SERVICE["Network"]="network"
+                  MAIN_OPTION_TO_SERVICE["OCI Firewall"]="firewall"
+                  MAIN_OPTION_TO_SERVICE["DNS Management"]="dns"
+                  MAIN_OPTION_TO_SERVICE["Compute"]="instance"
+                  MAIN_OPTION_TO_SERVICE["Storage"]="block-volume"
+                  MAIN_OPTION_TO_SERVICE["Database"]="dbsystem-vm-bm"
+                  MAIN_OPTION_TO_SERVICE["Load Balancers"]="loadbalancer"
+                  MAIN_OPTION_TO_SERVICE["Management Services"]="managementservices"
+                  MAIN_OPTION_TO_SERVICE["Developer Services"]="oke"
+                  MAIN_OPTION_TO_SERVICE["Security"]="kms"
+                  MAIN_OPTION_TO_SERVICE["Logging Services"]="logging"
+                  MAIN_OPTION_TO_SERVICE["Software-Defined Data Centers - OCVS"]="sddc"
+                  # === Export Workflow Options ===
+                  MAIN_OPTION_TO_SERVICE["Export Compute"]="instance"
+                  MAIN_OPTION_TO_SERVICE["Export Identity"]="identity"
+                  MAIN_OPTION_TO_SERVICE["Export Governance"]="tagging"
+                  MAIN_OPTION_TO_SERVICE["Export Cost Management"]="budget"
+                  MAIN_OPTION_TO_SERVICE["Export Network"]="network"
+                  MAIN_OPTION_TO_SERVICE["Export OCI Firewall"]="firewall"
+                  MAIN_OPTION_TO_SERVICE["Export DNS Management"]="dns"
+                  MAIN_OPTION_TO_SERVICE["Export Storage"]="block-volume"
+                  MAIN_OPTION_TO_SERVICE["Export Databases"]="dbsystem-vm-bm"
+                  MAIN_OPTION_TO_SERVICE["Export Load Balancers"]="loadbalancer"
+                  MAIN_OPTION_TO_SERVICE["Export Management Services"]="managementservices"
+                  MAIN_OPTION_TO_SERVICE["Export Developer Services"]="oke"
+                  MAIN_OPTION_TO_SERVICE["Export Security"]="kms"
+                  MAIN_OPTION_TO_SERVICE["Export Software-Defined Data Centers - OCVS"]="sddc"
+              
+                  # Define sub-option to service name mapping using full sub-option names
+                  declare -A SUB_OPTION_TO_SERVICE
+                  SUB_OPTION_TO_SERVICE["Export Governance:Export Tags"]="tagging"
+                  SUB_OPTION_TO_SERVICE["Export Governance:Export Quotas"]="quota"
+                  SUB_OPTION_TO_SERVICE["Export Cost Management:Export Budgets"]="budget"
+                  SUB_OPTION_TO_SERVICE["Export Network:Export Network components for NSGs Tab"]="nsg"
+                  SUB_OPTION_TO_SERVICE["Export Storage:Export Block Volumes/Block Backup Policy"]="block-volume"
+                  SUB_OPTION_TO_SERVICE["Export Storage:Export File Systems"]="fss"
+                  SUB_OPTION_TO_SERVICE["Export Storage:Export Object Storage Buckets"]="object-storage"
+                  SUB_OPTION_TO_SERVICE["Export Databases:Export Virtual Machine or Bare Metal DB Systems"]="dbsystem-vm-bm"
+                  SUB_OPTION_TO_SERVICE["Export Databases:Export EXA Infra and EXA VMClusters"]="database-exacs"
+                  SUB_OPTION_TO_SERVICE["Export Databases:Export ADBs"]="adb"
+                  SUB_OPTION_TO_SERVICE["Export Databases:Export MySQL DBs"]="mysql-dbsystem"
+                  SUB_OPTION_TO_SERVICE["Export Load Balancers:Export Network Load Balancers"]="networkloadbalancer"
+                  SUB_OPTION_TO_SERVICE["Export Compute:Export Dedicated VM Hosts"]="dedicated-vm-host"
+                  SUB_OPTION_TO_SERVICE["Export Compute:Export Instances (excludes instances launched by OKE)"]="instance"
+              
+                  # Check if Export All OCI Resources is in config.yaml or service_options.json
+                  EXPORT_ALL_CONFIG=$(yq e '.export_resources.operations[] | select(.main_option == "Export All OCI Resources")' config.yaml 2>>"$LOG_FILE" || echo "")
+                  if [ -n "$EXPORT_ALL_CONFIG" ] || ( [ -f /tmp/service_options.json ] && jq -e '."Export All OCI Resources"' /tmp/service_options.json >/dev/null 2>>"$LOG_FILE" ); then
+                    echo "Export All OCI Resources detected, processing all services" | tee -a "$LOG_FILE"
+                    SERVICES=("${!MAIN_OPTION_TO_SERVICE[@]}")
+                  else
+                    # Validate service_options.json
+                    if [ ! -f /tmp/service_options.json ] || ! jq -e . /tmp/service_options.json >/dev/null 2>>"$LOG_FILE"; then
+                      echo "Error: /tmp/service_options.json does not exist or is invalid JSON" | tee -a "$LOG_FILE"
+                      exit 1
+                    fi
+                    SERVICES=$(jq -r 'keys[] | select(startswith("Export "))' /tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to parse service_options.json with jq" | tee -a "$LOG_FILE"; exit 1; })
+                    if [ -z "$SERVICES" ]; then
+                      echo "Warning: No export services found in service_options.json, skipping" | tee -a "$LOG_FILE"
+                      exit 0
+                    fi
+                  fi
+              
+                  # Process each main_option
+                  for main_option in "${SERVICES[@]}"; do
+                    echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
+                    # Check if main_option has sub-options in service_options.json
+                    SUB_OPTIONS=$(jq -r --arg key "$main_option" '.[$key] | if type == "array" then .[] else (.[keys[]] // []) | .[] end' /tmp/service_options.json 2>>"$LOG_FILE" | tr '\n' ',' | sed 's/,$//')
+                    if [ $? -ne 0 ]; then
+                      echo "Error: Failed to extract sub-options for $main_option" | tee -a "$LOG_FILE"
+                      exit 1
+                    fi
+                    if [ -z "$SUB_OPTIONS" ]; then
+                      # No sub-options, use main_option mapping
+                      SERVICE_NAME="${MAIN_OPTION_TO_SERVICE[$main_option]}"
+                      if [ -z "$SERVICE_NAME" ]; then
+                        echo "Warning: No service mapping found for $main_option in MAIN_OPTION_TO_SERVICE, skipping" | tee -a "$LOG_FILE"
+                        continue
+                      fi
+                      echo "Mapped main_option $main_option to OCI Service Name $SERVICE_NAME (no sub-options)" | tee -a "$LOG_FILE"
+                      # Get service directory
+                      if [ "$USE_OUTDIR_STRUCTURE" = true ]; then
+                        SERVICE_DIR=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OUTDIR_STRUCTURE_FILE | grep -i \"^$SERVICE_NAME=\" | cut -d= -f2'") 2>>"$LOG_FILE"
+                        if [ -z "$SERVICE_DIR" ]; then
+                          echo "Warning: No directory mapping found for $SERVICE_NAME in $OUTDIR_STRUCTURE_FILE, skipping $main_option" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        echo "Mapped $SERVICE_NAME to directory $SERVICE_DIR" | tee -a "$LOG_FILE"
+                        TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION/$SERVICE_DIR"
+                      else
+                        TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION"
+                      fi
+                      # Process Terraform directory
+                      if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
+                        echo "Warning: Directory $TF_DIR does not exist, skipping $main_option" | tee -a "$LOG_FILE"
+                        continue
+                      fi
+                      # Find latest .tfvars file
+                      LATEST_TFVARS=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'ls -t $TF_DIR/*.tfvars 2>/dev/null | head -n 1'") 2>>"$LOG_FILE"
+                      if [ -z "$LATEST_TFVARS" ]; then
+                        echo "Warning: No .tfvars files found in $TF_DIR, skipping $main_option" | tee -a "$LOG_FILE"
+                        continue
+                      fi
+                      echo "Latest .tfvars file: $LATEST_TFVARS" | tee -a "$LOG_FILE"
+                      # Check if .tfvars file is recent (within 1 hour)
+                      if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'find $LATEST_TFVARS -mmin -60'" 2>>"$LOG_FILE"; then
+                        echo "Warning: $LATEST_TFVARS is older than 1 hour, skipping $main_option" | tee -a "$LOG_FILE"
+                        continue
+                      fi
+                      # Set Terraform commands
+                      if [ "$WF_TYPE" = "export_resources" ]; then
+                        COMMANDS=("init" "plan -var-file=$LATEST_TFVARS -out=tfplan")
+                      else
+                        COMMANDS=("init" "plan -var-file=$LATEST_TFVARS -out=tfplan" "apply tfplan")
+                      fi
+                      # Execute Terraform commands with retries
+                      for cmd in "${COMMANDS[@]}"; do
+                        RETRY_COUNT=0
+                        MAX_RETRIES=3
+                        until ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform $cmd'" >> "$LOG_FILE" 2>&1; do
+                          RETRY_COUNT=$((RETRY_COUNT + 1))
+                          if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                            echo "Error: Terraform $cmd failed for $main_option after $MAX_RETRIES retries, continuing" | tee -a "$LOG_FILE"
+                            break
+                          fi
+                          echo "Retrying terraform $cmd for $main_option (attempt $((RETRY_COUNT + 1)))" | tee -a "$LOG_FILE"
+                          sleep 120
+                        done
+                        if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                          break
+                        fi
+                        if [ "$cmd" = "plan -var-file=$LATEST_TFVARS -out=tfplan" ] && [ "$WF_TYPE" = "export_resources" ]; then
+                          PLAN_FILE="/tmp/terraform_plans/${main_option}_tfplan_$(TZ=Asia/Kolkata date +%F_%H-%M-%S).txt"
+                          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform show -no-color tfplan'" > "$PLAN_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to save terraform plan for $main_option" | tee -a "$LOG_FILE"; exit 1; }
+                          echo "Terraform plan saved to $PLAN_FILE for $main_option" | tee -a "$LOG_FILE"
+                        fi
+                      done
+                      if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                        continue
+                      fi
+                      if [ "$WF_TYPE" = "create_resources" ]; then
+                        echo "Terraform apply completed for $main_option" | tee -a "$LOG_FILE"
+                      else
+                        echo "Terraform plan completed for $main_option (export_resources mode)" | tee -a "$LOG_FILE"
+                      fi
+                    else
+                      # Process sub-options
+                      IFS=',' read -ra SUB_OPTION_ARRAY <<< "$SUB_OPTIONS"
+                      for sub_option in "${SUB_OPTION_ARRAY[@]}"; do
+                        echo "Processing sub_option: $sub_option for $main_option" | tee -a "$LOG_FILE"
+                        # Check sub-option mapping
+                        SUB_KEY="${main_option}:${sub_option}"
+                        SERVICE_NAME="${SUB_OPTION_TO_SERVICE[$SUB_KEY]:-${MAIN_OPTION_TO_SERVICE[$main_option]}}"
+                        if [ -z "$SERVICE_NAME" ]; then
+                          echo "Warning: No service mapping found for $SUB_KEY or $main_option, skipping" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        echo "Mapped $SUB_KEY to OCI Service Name $SERVICE_NAME" | tee -a "$LOG_FILE"
+                        # Get service directory
+                        if [ "$USE_OUTDIR_STRUCTURE" = true ]; then
+                          SERVICE_DIR=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OUTDIR_STRUCTURE_FILE | grep -i \"^$SERVICE_NAME=\" | cut -d= -f2'") 2>>"$LOG_FILE"
+                          if [ -z "$SERVICE_DIR" ]; then
+                            echo "Warning: No directory mapping found for $SERVICE_NAME in $OUTDIR_STRUCTURE_FILE, skipping $SUB_KEY" | tee -a "$LOG_FILE"
+                            continue
+                          fi
+                          echo "Mapped $SERVICE_NAME to directory $SERVICE_DIR" | tee -a "$LOG_FILE"
+                          TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION/$SERVICE_DIR"
+                        else
+                          TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION"
+                        fi
+                        # Process Terraform directory
+                        if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
+                          echo "Warning: Directory $TF_DIR does not exist, skipping $SUB_KEY" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        # Find latest .tfvars file
+                        LATEST_TFVARS=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'ls -t $TF_DIR/*.tfvars 2>/dev/null | head -n 1'") 2>>"$LOG_FILE"
+                        if [ -z "$LATEST_TFVARS" ]; then
+                          echo "Warning: No .tfvars files found in $TF_DIR, skipping $SUB_KEY" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        echo "Latest .tfvars file: $LATEST_TFVARS" | tee -a "$LOG_FILE"
+                        # Check if .tfvars file is recent (within 1 hour)
+                        if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'find $LATEST_TFVARS -mmin -60'" 2>>"$LOG_FILE"; then
+                          echo "Warning: $LATEST_TFVARS is older than 1 hour, skipping $SUB_KEY" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        # Set Terraform commands
+                        if [ "$WF_TYPE" = "export_resources" ]; then
+                          COMMANDS=("init" "plan -var-file=$LATEST_TFVARS -out=tfplan")
+                        else
+                          COMMANDS=("init" "plan -var-file=$LATEST_TFVARS -out=tfplan" "apply tfplan")
+                        fi
+                        # Execute Terraform commands with retries
+                        for cmd in "${COMMANDS[@]}"; do
+                          RETRY_COUNT=0
+                          MAX_RETRIES=3
+                          until ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform $cmd'" >> "$LOG_FILE" 2>&1; do
+                            RETRY_COUNT=$((RETRY_COUNT + 1))
+                            if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                              echo "Error: Terraform $cmd failed for $SUB_KEY after $MAX_RETRIES retries, continuing" | tee -a "$LOG_FILE"
+                              break
+                            fi
+                            echo "Retrying terraform $cmd for $SUB_KEY (attempt $((RETRY_COUNT + 1)))" | tee -a "$LOG_FILE"
+                            sleep 120
+                          done
+                          if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                            break
+                          fi
+                          if [ "$cmd" = "plan -var-file=$LATEST_TFVARS -out=tfplan" ] && [ "$WF_TYPE" = "export_resources" ]; then
+                            # Sanitize sub_option for filename (replace spaces with underscores)
+                            SANITIZED_SUB_OPTION=$(echo "$sub_option" | tr ' ' '_')
+                            PLAN_FILE="/tmp/terraform_plans/${main_option}_${SANITIZED_SUB_OPTION}_tfplan_$(TZ=Asia/Kolkata date +%F_%H-%M-%S).txt"
+                            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform show -no-color tfplan'" > "$PLAN_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to save terraform plan for $SUB_KEY" | tee -a "$LOG_FILE"; exit 1; }
+                            echo "Terraform plan saved to $PLAN_FILE for $SUB_KEY" | tee -a "$LOG_FILE"
+                          fi
+                        done
+                        if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                          continue
+                        fi
+                        if [ "$WF_TYPE" = "create_resources" ]; then
+                          echo "Terraform apply completed for $SUB_KEY" | tee -a "$LOG_FILE"
+                        else
+                          echo "Terraform plan completed for $SUB_KEY (export_resources mode)" | tee -a "$LOG_FILE"
+                        fi
+                      done
+                    fi
+                    echo "Processing completed for main_option: $main_option" | tee -a "$LOG_FILE"
+                  done
+              
+                  echo "Terraform configurations processed successfully" | tee -a "$LOG_FILE"
             
   CD3_Bootstrap_Existing_Instance:
       if: ${{ github.event.inputs.use_existing_instance == 'true' }}
@@ -2019,7 +2333,7 @@ jobs:
                     if main_option:
                         service_options[main_option] = {}
                         for i, sub_option in enumerate(sub_options):
-                            child_options = sub_child_options[i] if i < len(sub_child_options) else []
+                            child_options = sub_child_options[i] if i < len(sub_child_options) and sub_child_options[i] is not None else []
                             service_options[main_option][sub_option] = child_options
                 with open(output_path, 'w') as f:
                     json.dump(service_options, f, indent=2)
@@ -2344,314 +2658,496 @@ jobs:
             ls -l "$LOCAL_DIR" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list exported files" | tee -a "$LOG_FILE"; exit 1; }
             echo "Retrieve Exported Files completed successfully" | tee -a "$LOG_FILE"
 
+
         - name: Run Shell Scripts in Changed Terraform Service Directories
           if: steps.validate_workflow.outputs.export_resources_enabled == 'true'
           run: |
-              LOG_FILE="/tmp/cd3_shell_scripts_$(date +%F_%H-%M-%S).log"
-              CONTAINER_NAME="cd3_toolkit"
-              PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
-              REGION="${{ github.event.inputs.region || 'us-phoenix-1' }}"
-              OUTDIR_STRUCTURE_FILE="/cd3user/tenancies/$PREFIX/${PREFIX}_outdir_structure_file.properties"
-              OCI_REGIONS_FILE="/cd3user/oci_tools/cd3_automation_toolkit/OCI_Regions"
-              TF_BASE_DIR="/cd3user/tenancies/$PREFIX/terraform_files"
-              echo "Starting shell script execution for prefix: $PREFIX at $(date)" | tee -a "$LOG_FILE"
-              # Validate INSTANCE_IP
-              if [ -z "${{ env.INSTANCE_IP }}" ]; then
-                echo "Error: INSTANCE_IP is empty" | tee -a "$LOG_FILE"
-                exit 1
-              fi
-              # Get short region key
-              SHORT_REGION=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OCI_REGIONS_FILE | grep \":$REGION\" | cut -d: -f1'") 2>>"$LOG_FILE"
-              if [ -z "$SHORT_REGION" ]; then
-                echo "Error: Failed to find short region key for $REGION in $OCI_REGIONS_FILE" | tee -a "$LOG_FILE"
-                exit 1
-              fi
-              echo "Mapped region $REGION to short key $SHORT_REGION" | tee -a "$LOG_FILE"
-              # Validate service_options.json
-              if [ ! -f /tmp/service_options.json ]; then
-                echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
-                exit 1
-              fi
-              # Check if outdir_structure_file.properties exists
-              USE_OUTDIR_STRUCTURE=false
-              if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME test -f $OUTDIR_STRUCTURE_FILE" 2>>"$LOG_FILE"; then
-                USE_OUTDIR_STRUCTURE=true
-                echo "Outdir structure enabled: true" | tee -a "$LOG_FILE"
-              else
-                echo "Outdir structure enabled: false" | tee -a "$LOG_FILE"
-              fi
-              # Define mapping from main_option to OCI Service Name
-              declare -A MAIN_OPTION_TO_SERVICE
-              MAIN_OPTION_TO_SERVICE["Export Identity"]="identity"
-              MAIN_OPTION_TO_SERVICE["Export Governance"]="tagging"
-              MAIN_OPTION_TO_SERVICE["Export Cost Management"]="budget"
-              MAIN_OPTION_TO_SERVICE["Export Network"]="network"
-              MAIN_OPTION_TO_SERVICE["Export OCI Firewall"]="firewall"
-              MAIN_OPTION_TO_SERVICE["Export DNS Management"]="dns"
-              MAIN_OPTION_TO_SERVICE["Export Compute"]="instance"
-              MAIN_OPTION_TO_SERVICE["Export Storage"]="block_volume"
-              MAIN_OPTION_TO_SERVICE["Export Databases"]="dbsystem_vm_bm"
-              MAIN_OPTION_TO_SERVICE["Export Load Balancers"]="loadbalancer"
-              MAIN_OPTION_TO_SERVICE["Export Management Services"]="managementservices"
-              MAIN_OPTION_TO_SERVICE["Export Developer Services"]="oke"
-              MAIN_OPTION_TO_SERVICE["Export Security"]="kms"
-              MAIN_OPTION_TO_SERVICE["Export Software-Defined Data Centers - OCVS"]="sddc"
-              
-              # Check if Export All OCI Resources is in config.yaml or service_options.json
-              EXPORT_ALL_CONFIG=$(yq e '.export_resources.operations[] | select(.main_option == "Export All OCI Resources")' config.yaml 2>>"$LOG_FILE" || echo "")
-              if [ -n "$EXPORT_ALL_CONFIG" ] || ( [ -f /tmp/service_options.json ] && jq -e '."Export All OCI Resources"' /tmp/service_options.json >/dev/null 2>>"$LOG_FILE" ); then
-                echo "Export All OCI Resources detected, processing all services" | tee -a "$LOG_FILE"
-                SERVICES=("${!MAIN_OPTION_TO_SERVICE[@]}")
-              else
-                # Validate service_options.json
-                if [ ! -f /tmp/service_options.json ] || ! jq -e . /tmp/service_options.json >/dev/null 2>>"$LOG_FILE"; then
-                  echo "Error: /tmp/service_options.json does not exist or is invalid JSON" | tee -a "$LOG_FILE"
-                  exit 1
-                fi
-                echo "Contents of /tmp/service_options.json:" | tee -a "$LOG_FILE"
-                cat /tmp/service_options.json >> "$LOG_FILE" 2>&1
-                SERVICES=$(jq -r 'keys[] | select(startswith("Export "))' /tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to parse service_options.json with jq" | tee -a "$LOG_FILE"; exit 1; })
-                if [ -z "$SERVICES" ]; then
-                  echo "Warning: No export services found in service_options.json, skipping" | tee -a "$LOG_FILE"
-                  exit 0
-                fi
-              fi
-              # Process services
-              for main_option in "${SERVICES[@]}"; do
-                echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
-                SERVICE_NAME="${MAIN_OPTION_TO_SERVICE[$main_option]}"
-                if [ -z "$SERVICE_NAME" ]; then
-                  echo "Warning: No service mapping found for $main_option, skipping" | tee -a "$LOG_FILE"
-                  continue
-                fi
-                echo "Mapped main_option $main_option to OCI Service Name $SERVICE_NAME" | tee -a "$LOG_FILE"
-                # Get service directory
-                if [ "$USE_OUTDIR_STRUCTURE" = true ]; then
-                  SERVICE_DIR=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OUTDIR_STRUCTURE_FILE | grep -i \"^$SERVICE_NAME=\" | cut -d= -f2'") 2>>"$LOG_FILE"
-                  if [ -z "$SERVICE_DIR" ]; then
-                    echo "Warning: No directory mapping found for $SERVICE_NAME in $OUTDIR_STRUCTURE_FILE, skipping $main_option" | tee -a "$LOG_FILE"
-                    continue
+                  LOG_FILE="/tmp/cd3_shell_scripts_$(TZ=Asia/Kolkata date +%F_%H-%M-%S).log"
+                  CONTAINER_NAME="cd3_toolkit"
+                  PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+                  REGION="${{ github.event.inputs.region || 'us-phoenix-1' }}"
+                  OUTDIR_STRUCTURE_FILE="/cd3user/tenancies/$PREFIX/${PREFIX}_outdir_structure_file.properties"
+                  OCI_REGIONS_FILE="/cd3user/oci_tools/cd3_automation_toolkit/OCI_Regions"
+                  TF_BASE_DIR="/cd3user/tenancies/$PREFIX/terraform_files"
+                  echo "Starting shell script execution for prefix: $PREFIX at $(date)" | tee -a "$LOG_FILE"
+                  # Validate INSTANCE_IP
+                  if [ -z "${{ env.INSTANCE_IP }}" ]; then
+                    echo "Error: INSTANCE_IP is empty" | tee -a "$LOG_FILE"
+                    exit 1
                   fi
-                  echo "Mapped $SERVICE_NAME to directory $SERVICE_DIR" | tee -a "$LOG_FILE"
-                  TF_DIR="$TF_BASE_DIR/$SHORT_REGION/$SERVICE_DIR"
-                else
-                  TF_DIR="$TF_BASE_DIR/$SHORT_REGION"
-                fi
-                # Check if service directory exists
-                if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
-                  echo "Warning: Directory $TF_DIR does not exist, skipping $main_option" | tee -a "$LOG_FILE"
-                  continue
-                fi
-                # Check for recently modified files (within 60 minutes)
-                CHANGED_FILES=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME find $TF_DIR -maxdepth 1 -type f -mmin -60" 2>>"$LOG_FILE")
-                if [ -z "$CHANGED_FILES" ]; then
-                  echo "No recently modified files in $TF_DIR for $main_option, skipping" | tee -a "$LOG_FILE"
-                  continue
-                fi
-                echo "Found recently modified files in $TF_DIR: $CHANGED_FILES" | tee -a "$LOG_FILE"
-                # Find .sh scripts
-                SCRIPTS=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME find $TF_DIR -maxdepth 1 -type f -name '*.sh'" 2>>"$LOG_FILE" || { echo "Error: Failed to list .sh scripts in $TF_DIR" | tee -a "$LOG_FILE"; exit 1; })
-                if [ -z "$SCRIPTS" ]; then
-                  echo "No shell scripts found in $TF_DIR for $main_option" | tee -a "$LOG_FILE"
-                  continue
-                fi
-                # Execute each script
-                for SCRIPT in $SCRIPTS; do
-                  echo "Executing script: $SCRIPT for $main_option" | tee -a "$LOG_FILE"
-                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && chmod +x $SCRIPT && ./$(basename $SCRIPT)'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to execute $SCRIPT for $main_option" | tee -a "$LOG_FILE"; exit 1; }
-                  echo "Successfully executed $SCRIPT for $main_option" | tee -a "$LOG_FILE"
-                done
-              done
-              echo "Shell script execution completed for prefix: $PREFIX" | tee -a "$LOG_FILE"
+                  # Get short region key
+                  SHORT_REGION=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OCI_REGIONS_FILE | grep \":$REGION\" | cut -d: -f1'") 2>>"$LOG_FILE"
+                  if [ -z "$SHORT_REGION" ]; then
+                    echo "Error: Failed to find short region key for $REGION in $OCI_REGIONS_FILE" | tee -a "$LOG_FILE"
+                    exit 1
+                  fi
+                  echo "Mapped region $REGION to short key $SHORT_REGION" | tee -a "$LOG_FILE"
+                  # Validate service_options.json
+                  if [ ! -f /tmp/service_options.json ]; then
+                    echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
+                    exit 1
+                  fi
+                  echo "Contents of /tmp/service_options.json:" | tee -a "$LOG_FILE"
+                  cat /tmp/service_options.json >> "$LOG_FILE" 2>&1
+                  # Check if outdir_structure_file.properties exists
+                  USE_OUTDIR_STRUCTURE=false
+                  if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME test -f $OUTDIR_STRUCTURE_FILE" 2>>"$LOG_FILE"; then
+                    USE_OUTDIR_STRUCTURE=true
+                    echo "Outdir structure enabled: true" | tee -a "$LOG_FILE"
+                    echo "Contents of $OUTDIR_STRUCTURE_FILE:" | tee -a "$LOG_FILE"
+                    ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME cat $OUTDIR_STRUCTURE_FILE" >>"$LOG_FILE" 2>&1
+                  else
+                    echo "Outdir structure enabled: false" | tee -a "$LOG_FILE"
+                  fi
+                  # Define mapping from main_option to OCI Service Name
+                  declare -A MAIN_OPTION_TO_SERVICE
+                  MAIN_OPTION_TO_SERVICE["Export Identity"]="identity"
+                  MAIN_OPTION_TO_SERVICE["Export Governance"]="tagging"
+                  MAIN_OPTION_TO_SERVICE["Export Cost Management"]="budget"
+                  MAIN_OPTION_TO_SERVICE["Export Network"]="network"
+                  MAIN_OPTION_TO_SERVICE["Export OCI Firewall"]="firewall"
+                  MAIN_OPTION_TO_SERVICE["Export DNS Management"]="dns"
+                  MAIN_OPTION_TO_SERVICE["Export Compute"]="instance"
+                  MAIN_OPTION_TO_SERVICE["Export Storage"]="block-volume"
+                  MAIN_OPTION_TO_SERVICE["Export Databases"]="dbsystem-vm-bm"
+                  MAIN_OPTION_TO_SERVICE["Export Load Balancers"]="loadbalancer"
+                  MAIN_OPTION_TO_SERVICE["Export Management Services"]="managementservices"
+                  MAIN_OPTION_TO_SERVICE["Export Developer Services"]="oke"
+                  MAIN_OPTION_TO_SERVICE["Export Security"]="kms"
+                  MAIN_OPTION_TO_SERVICE["Export Software-Defined Data Centers - OCVS"]="sddc"
+                  # Define sub-option to service name mapping using full sub-option names
+                  declare -A SUB_OPTION_TO_SERVICE
+                  SUB_OPTION_TO_SERVICE["Export Governance:Export Tags"]="tagging"
+                  SUB_OPTION_TO_SERVICE["Export Governance:Export Quotas"]="quota"
+                  SUB_OPTION_TO_SERVICE["Export Cost Management:Export Budgets"]="budget"
+                  SUB_OPTION_TO_SERVICE["Export Network:Export Network components for NSGs Tab"]="nsg"
+                  SUB_OPTION_TO_SERVICE["Export Storage:Export Block Volumes/Block Backup Policy"]="block-volume"
+                  SUB_OPTION_TO_SERVICE["Export Storage:Export File Systems"]="fss"
+                  SUB_OPTION_TO_SERVICE["Export Storage:Export Object Storage Buckets"]="object-storage"
+                  SUB_OPTION_TO_SERVICE["Export Databases:Export Virtual Machine or Bare Metal DB Systems"]="dbsystem-vm-bm"
+                  SUB_OPTION_TO_SERVICE["Export Databases:Export EXA Infra and EXA VMClusters"]="database-exacs"
+                  SUB_OPTION_TO_SERVICE["Export Databases:Export ADBs"]="adb"
+                  SUB_OPTION_TO_SERVICE["Export Databases:Export MySQL DBs"]="mysql-dbsystem"
+                  SUB_OPTION_TO_SERVICE["Export Load Balancers:Export Network Load Balancers"]="networkloadbalancer"
+                  SUB_OPTION_TO_SERVICE["Export Compute:Export Dedicated VM Hosts"]="dedicated-vm-host"
+                  SUB_OPTION_TO_SERVICE["Export Compute:Export Instances"]="instance"
+                  # Check if Export All OCI Resources is in config.yaml or service_options.json
+                  EXPORT_ALL_CONFIG=$(yq e '.export_resources.operations[] | select(.main_option == "Export All OCI Resources")' config.yaml 2>>"$LOG_FILE" || echo "")
+                  if [ -n "$EXPORT_ALL_CONFIG" ] || ( [ -f /tmp/service_options.json ] && jq -e '."Export All OCI Resources"' /tmp/service_options.json >/dev/null 2>>"$LOG_FILE" ); then
+                    echo "Export All OCI Resources detected, processing all services" | tee -a "$LOG_FILE"
+                    SERVICES=("${!MAIN_OPTION_TO_SERVICE[@]}")
+                  else
+                    if [ ! -f /tmp/service_options.json ] || ! jq -e . /tmp/service_options.json >/dev/null 2>>"$LOG_FILE"; then
+                      echo "Error: /tmp/service_options.json does not exist or is invalid JSON" | tee -a "$LOG_FILE"
+                      exit 1
+                    fi
+                    SERVICES=$(jq -r 'keys[] | select(startswith("Export "))' /tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to parse service_options.json with jq" | tee -a "$LOG_FILE"; exit 1; })
+                    if [ -z "$SERVICES" ]; then
+                      echo "Warning: No export services found in service_options.json, skipping" | tee -a "$LOG_FILE"
+                      exit 0
+                    fi
+                  fi
+                  # Process services
+                  for main_option in "${SERVICES[@]}"; do
+                    echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
+                    # Check if main_option has sub-options in service_options.json
+                    SUB_OPTIONS=$(jq -r --arg key "$main_option" '.[$key] | if type == "array" then .[] else (.[keys[]] // []) | .[] end' /tmp/service_options.json 2>>"$LOG_FILE" | tr '\n' ',' | sed 's/,$//')
+                    if [ $? -ne 0 ]; then
+                      echo "Error: Failed to extract sub-options for $main_option" | tee -a "$LOG_FILE"
+                      exit 1
+                    fi
+                    if [ -z "$SUB_OPTIONS" ]; then
+                      # No sub-options, use main_option mapping
+                      SERVICE_NAME="${MAIN_OPTION_TO_SERVICE[$main_option]}"
+                      if [ -z "$SERVICE_NAME" ]; then
+                        echo "Warning: No service mapping found for $main_option, skipping" | tee -a "$LOG_FILE"
+                        continue
+                      fi
+                      echo "Mapped main_option $main_option to OCI Service Name $SERVICE_NAME (no sub-options)" | tee -a "$LOG_FILE"
+                      # Get service directory
+                      if [ "$USE_OUTDIR_STRUCTURE" = true ]; then
+                        SERVICE_DIR=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OUTDIR_STRUCTURE_FILE | grep -i \"^$SERVICE_NAME=\" | cut -d= -f2'") 2>>"$LOG_FILE"
+                        if [ -z "$SERVICE_DIR" ]; then
+                          echo "Warning: No directory mapping found for $SERVICE_NAME in $OUTDIR_STRUCTURE_FILE, skipping $main_option" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        echo "Mapped $SERVICE_NAME to directory $SERVICE_DIR" | tee -a "$LOG_FILE"
+                        TF_DIR="$TF_BASE_DIR/$SHORT_REGION/$SERVICE_DIR"
+                      else
+                        TF_DIR="$TF_BASE_DIR/$SHORT_REGION"
+                      fi
+                      # Process directory
+                      if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
+                        echo "Warning: Directory $TF_DIR does not exist, skipping $main_option" | tee -a "$LOG_FILE"
+                        continue
+                      fi
+                      # Check for recently modified files
+                      CHANGED_FILES=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME find $TF_DIR -maxdepth 1 -type f -mmin -60" 2>>"$LOG_FILE")
+                      if [ -z "$CHANGED_FILES" ]; then
+                        echo "No recently modified files in $TF_DIR for $main_option, skipping" | tee -a "$LOG_FILE"
+                        continue
+                      fi
+                      echo "Found recently modified files in $TF_DIR: $CHANGED_FILES" | tee -a "$LOG_FILE"
+                      # Find and execute .sh scripts
+                      SCRIPTS=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME find $TF_DIR -maxdepth 1 -type f -name '*.sh'" 2>>"$LOG_FILE" || { echo "Error: Failed to list .sh scripts in $TF_DIR" | tee -a "$LOG_FILE"; exit 1; })
+                      if [ -z "$SCRIPTS" ]; then
+                        echo "No shell scripts found in $TF_DIR for $main_option" | tee -a "$LOG_FILE"
+                        continue
+                      fi
+                      for SCRIPT in $SCRIPTS; do
+                        echo "Executing script: $SCRIPT for $main_option" | tee -a "$LOG_FILE"
+                        ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && chmod +x $SCRIPT && ./$(basename $SCRIPT)'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to execute $SCRIPT for $main_option" | tee -a "$LOG_FILE"; exit 1; }
+                        echo "Successfully executed $SCRIPT for $main_option" | tee -a "$LOG_FILE"
+                      done
+                    else
+                      # Process sub-options
+                      IFS=',' read -ra SUB_OPTION_ARRAY <<< "$SUB_OPTIONS"
+                      for sub_option in "${SUB_OPTION_ARRAY[@]}"; do
+                        echo "Processing sub_option: $sub_option for $main_option" | tee -a "$LOG_FILE"
+                        # Check sub-option mapping
+                        SUB_KEY="${main_option}:${sub_option}"
+                        SERVICE_NAME="${SUB_OPTION_TO_SERVICE[$SUB_KEY]:-${MAIN_OPTION_TO_SERVICE[$main_option]}}"
+                        if [ -z "$SERVICE_NAME" ]; then
+                          echo "Warning: No service mapping found for $SUB_KEY or $main_option, skipping" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        echo "Mapped $SUB_KEY to OCI Service Name $SERVICE_NAME" | tee -a "$LOG_FILE"
+                        # Get service directory
+                        if [ "$USE_OUTDIR_STRUCTURE" = true ]; then
+                          SERVICE_DIR=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OUTDIR_STRUCTURE_FILE | grep -i \"^$SERVICE_NAME=\" | cut -d= -f2'") 2>>"$LOG_FILE"
+                          if [ -z "$SERVICE_DIR" ]; then
+                            echo "Warning: No directory mapping found for $SERVICE_NAME in $OUTDIR_STRUCTURE_FILE, skipping $SUB_KEY" | tee -a "$LOG_FILE"
+                            continue
+                          fi
+                          echo "Mapped $SERVICE_NAME to directory $SERVICE_DIR" | tee -a "$LOG_FILE"
+                          TF_DIR="$TF_BASE_DIR/$SHORT_REGION/$SERVICE_DIR"
+                        else
+                          TF_DIR="$TF_BASE_DIR/$SHORT_REGION"
+                        fi
+                        # Process directory
+                        if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
+                          echo "Warning: Directory $TF_DIR does not exist, skipping $SUB_KEY" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        # Check for recently modified files
+                        CHANGED_FILES=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME find $TF_DIR -maxdepth 1 -type f -mmin -60" 2>>"$LOG_FILE")
+                        if [ -z "$CHANGED_FILES" ]; then
+                          echo "No recently modified files in $TF_DIR for $SUB_KEY, skipping" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        echo "Found recently modified files in $TF_DIR: $CHANGED_FILES" | tee -a "$LOG_FILE"
+                        # Find and execute .sh scripts
+                        SCRIPTS=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME find $TF_DIR -maxdepth 1 -type f -name '*.sh'" 2>>"$LOG_FILE" || { echo "Error: Failed to list .sh scripts in $TF_DIR" | tee -a "$LOG_FILE"; exit 1; })
+                        if [ -z "$SCRIPTS" ]; then
+                          echo "No shell scripts found in $TF_DIR for $SUB_KEY" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        for SCRIPT in $SCRIPTS; do
+                          echo "Executing script: $SCRIPT for $SUB_KEY" | tee -a "$LOG_FILE"
+                          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"${{ env.INSTANCE_IP }}" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && chmod +x $SCRIPT && ./$(basename $SCRIPT)'" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to execute $SCRIPT for $SUB_KEY" | tee -a "$LOG_FILE"; exit 1; }
+                          echo "Successfully executed $SCRIPT for $SUB_KEY" | tee -a "$LOG_FILE"
+                        done
+                      done
+                    fi
+                    echo "Processing completed for main_option: $main_option" | tee -a "$LOG_FILE"
+                  done
+                  echo "Shell script execution completed for prefix: $PREFIX" | tee -a "$LOG_FILE"       
+
 
         - name: Apply Terraform Configurations for Services
           if: always()
           run: |
-              # Set environment variables
-              LOG_FILE="/tmp/cd3_terraform_apply_$(date +%F_%H-%M-%S).log"
-              touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
-              echo "Starting Apply Terraform Configurations step at $(date)" | tee -a "$LOG_FILE"
-              PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
-              CONTAINER_NAME="cd3_toolkit"
-              REGION="${{ github.event.inputs.region || 'us-phoenix-1' }}"
-              OUTDIR_STRUCTURE_FILE="/cd3user/tenancies/$PREFIX/${PREFIX}_outdir_structure_file.properties"
-              OCI_REGIONS_FILE="/cd3user/oci_tools/cd3_automation_toolkit/OCI_Regions"
-          
-              # Get workflow type
-              WF_TYPE=$(grep "workflow_type" /tmp/${PREFIX}_setUpOCI.properties | cut -d= -f2 | tr -d '[:space:]')
-              if [ -z "$WF_TYPE" ]; then
-                echo "Error: Workflow type not set in properties file" | tee -a "$LOG_FILE"
-                exit 1
-              fi
-              echo "Workflow type: $WF_TYPE" | tee -a "$LOG_FILE"
-          
-              # Validate INSTANCE_IP
-              if [ -z "$INSTANCE_IP" ]; then
-                echo "Error: INSTANCE_IP is empty" | tee -a "$LOG_FILE"
-                exit 1
-              fi
-          
-              # Get short region key
-              SHORT_REGION=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OCI_REGIONS_FILE | grep \":$REGION\" | cut -d: -f1'") 2>>"$LOG_FILE"
-              if [ -z "$SHORT_REGION" ]; then
-                echo "Error: Failed to find short region key for $REGION in $OCI_REGIONS_FILE" | tee -a "$LOG_FILE"
-                exit 1
-              fi
-              echo "Mapped region $REGION to short key $SHORT_REGION" | tee -a "$LOG_FILE"
-          
-              # Validate service_options.json
-              if [ ! -f /tmp/service_options.json ]; then
-                echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
-                exit 1
-              fi
-          
-              # Check if outdir_structure_file.properties exists
-              USE_OUTDIR_STRUCTURE=false
-              if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME test -f $OUTDIR_STRUCTURE_FILE" 2>>"$LOG_FILE"; then
-                USE_OUTDIR_STRUCTURE=true
-                echo "Outdir structure enabled: true" | tee -a "$LOG_FILE"
-              else
-                echo "Outdir structure enabled: false" | tee -a "$LOG_FILE"
-              fi
-          
-              # Create directory for Terraform plans
-              mkdir -p /tmp/terraform_plans || { echo "Error: Failed to create /tmp/terraform_plans" | tee -a "$LOG_FILE"; exit 1; }
-          
-              # Define mapping from main_option to OCI Service Name
-              declare -A MAIN_OPTION_TO_SERVICE
-
-              # === Create Workflow Options ===
-              MAIN_OPTION_TO_SERVICE["Identity"]="identity"
-              MAIN_OPTION_TO_SERVICE["Governance"]="tagging"
-              MAIN_OPTION_TO_SERVICE["Cost Management"]="budget"
-              MAIN_OPTION_TO_SERVICE["Network"]="network"
-              MAIN_OPTION_TO_SERVICE["OCI Firewall"]="firewall"
-              MAIN_OPTION_TO_SERVICE["DNS Management"]="dns"
-              MAIN_OPTION_TO_SERVICE["Compute"]="instance"
-              MAIN_OPTION_TO_SERVICE["Storage"]="block_volume"
-              MAIN_OPTION_TO_SERVICE["Database"]="dbsystem_vm_bm"
-              MAIN_OPTION_TO_SERVICE["Load Balancers"]="loadbalancer"
-              MAIN_OPTION_TO_SERVICE["Management Services"]="managementservices"
-              MAIN_OPTION_TO_SERVICE["Developer Services"]="oke"
-              MAIN_OPTION_TO_SERVICE["Security"]="kms"
-              MAIN_OPTION_TO_SERVICE["Logging Services"]="logging"
-              MAIN_OPTION_TO_SERVICE["Software-Defined Data Centers - OCVS"]="sddc"
-
-              # === Export Workflow Options (some may overlap) ===
-              MAIN_OPTION_TO_SERVICE["Export Compute"]="instance"
-              MAIN_OPTION_TO_SERVICE["Export Identity"]="identity"
-              MAIN_OPTION_TO_SERVICE["Export Governance"]="tagging"
-              MAIN_OPTION_TO_SERVICE["Export Cost Management"]="budget"
-              MAIN_OPTION_TO_SERVICE["Export Network"]="network"
-              MAIN_OPTION_TO_SERVICE["Export OCI Firewall"]="firewall"
-              MAIN_OPTION_TO_SERVICE["Export DNS Management"]="dns"
-              MAIN_OPTION_TO_SERVICE["Export Storage"]="block_volume"
-              MAIN_OPTION_TO_SERVICE["Export Databases"]="dbsystem_vm_bm"
-              MAIN_OPTION_TO_SERVICE["Export Load Balancers"]="loadbalancer"
-              MAIN_OPTION_TO_SERVICE["Export Management Services"]="managementservices"
-              MAIN_OPTION_TO_SERVICE["Export Developer Services"]="oke"
-              MAIN_OPTION_TO_SERVICE["Export Security"]="kms"
-              MAIN_OPTION_TO_SERVICE["Export Software-Defined Data Centers - OCVS"]="sddc"
-
-                        
-              # Check if Export All OCI Resources is in config.yaml or service_options.json
-              EXPORT_ALL_CONFIG=$(yq e '.export_resources.operations[] | select(.main_option == "Export All OCI Resources")' config.yaml 2>>"$LOG_FILE" || echo "")
-              if [ -n "$EXPORT_ALL_CONFIG" ] || ( [ -f /tmp/service_options.json ] && jq -e '."Export All OCI Resources"' /tmp/service_options.json >/dev/null 2>>"$LOG_FILE" ); then
-                echo "Export All OCI Resources detected, processing all services" | tee -a "$LOG_FILE"
-                SERVICES=("${!MAIN_OPTION_TO_SERVICE[@]}")
-              else
-                # Validate service_options.json
-                if [ ! -f /tmp/service_options.json ] || ! jq -e . /tmp/service_options.json >/dev/null 2>>"$LOG_FILE"; then
-                  echo "Error: /tmp/service_options.json does not exist or is invalid JSON" | tee -a "$LOG_FILE"
-                  exit 1
-                fi
-                echo "Contents of /tmp/service_options.json:" | tee -a "$LOG_FILE"
-                cat /tmp/service_options.json >> "$LOG_FILE" 2>&1
-                SERVICES=$(jq -r 'keys[] | select(startswith("Export "))' /tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to parse service_options.json with jq" | tee -a "$LOG_FILE"; exit 1; })
-                if [ -z "$SERVICES" ]; then
-                  echo "Warning: No export services found in service_options.json, skipping" | tee -a "$LOG_FILE"
-                  exit 0
-                fi
-              fi
-              # Process each main_option
-              for main_option in "${SERVICES[@]}"; do
-                echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
-                # Map main_option to OCI Service Name
-                SERVICE_NAME="${MAIN_OPTION_TO_SERVICE[$main_option]}"
-                if [ -z "$SERVICE_NAME" ]; then
-                  echo "Warning: No service mapping found for $main_option in MAIN_OPTION_TO_SERVICE, skipping" | tee -a "$LOG_FILE"
-                  continue
-                fi
-                echo "Mapped main_option $main_option to OCI Service Name $SERVICE_NAME" | tee -a "$LOG_FILE"
-                # Get service directory
-                if [ "$USE_OUTDIR_STRUCTURE" = true ]; then
-                  SERVICE_DIR=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OUTDIR_STRUCTURE_FILE | grep -i \"^$SERVICE_NAME=\" | cut -d= -f2'") 2>>"$LOG_FILE"
-                  if [ -z "$SERVICE_DIR" ]; then
-                    echo "Warning: No directory mapping found for $SERVICE_NAME in $OUTDIR_STRUCTURE_FILE, skipping $main_option" | tee -a "$LOG_FILE"
-                    continue
+                  # Set environment variables
+                  LOG_FILE="/tmp/cd3_terraform_apply_$(TZ=Asia/Kolkata date +%F_%H-%M-%S).log"
+                  touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
+                  echo "Starting Apply Terraform Configurations step at $(date)" | tee -a "$LOG_FILE"
+                  PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+                  CONTAINER_NAME="cd3_toolkit"
+                  REGION="${{ github.event.inputs.region || 'us-phoenix-1' }}"
+                  OUTDIR_STRUCTURE_FILE="/cd3user/tenancies/$PREFIX/${PREFIX}_outdir_structure_file.properties"
+                  OCI_REGIONS_FILE="/cd3user/oci_tools/cd3_automation_toolkit/OCI_Regions"
+              
+                  # Get workflow type
+                  WF_TYPE=$(grep "workflow_type" /tmp/${PREFIX}_setUpOCI.properties | cut -d= -f2 | tr -d '[:space:]')
+                  if [ -z "$WF_TYPE" ]; then
+                    echo "Error: Workflow type not set in properties file" | tee -a "$LOG_FILE"
+                    exit 1
                   fi
-                  echo "Mapped $SERVICE_NAME to directory $SERVICE_DIR" | tee -a "$LOG_FILE"
-                  TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION/$SERVICE_DIR"
-                else
-                  TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION"
-                fi
-                # Check if TF_DIR exists
-                if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
-                  echo "Warning: Directory $TF_DIR does not exist, skipping $main_option" | tee -a "$LOG_FILE"
-                  continue
-                fi
-                # Find latest .tfvars file
-                LATEST_TFVARS=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'ls -t $TF_DIR/*.tfvars 2>/dev/null | head -n 1'") 2>>"$LOG_FILE"
-                if [ -z "$LATEST_TFVARS" ]; then
-                  echo "Warning: No .tfvars files found in $TF_DIR, skipping $main_option" | tee -a "$LOG_FILE"
-                  continue
-                fi
-                echo "Latest .tfvars file: $LATEST_TFVARS" | tee -a "$LOG_FILE"
-                # Check if .tfvars file is recent (within 1 hour)
-                if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'find $LATEST_TFVARS -mmin -60'" 2>>"$LOG_FILE"; then
-                  echo "Warning: $LATEST_TFVARS is older than 1 hour, skipping $main_option" | tee -a "$LOG_FILE"
-                  continue
-                fi
-                # Set Terraform commands based on WF_TYPE
-                if [ "$WF_TYPE" = "export_resources" ]; then
-                  COMMANDS=("init" "plan -var-file=$LATEST_TFVARS -out=tfplan")
-                else
-                  COMMANDS=("init" "plan -var-file=$LATEST_TFVARS -out=tfplan" "apply tfplan")
-                fi
-                # Execute Terraform commands with retries
-                for cmd in "${COMMANDS[@]}"; do
-                  RETRY_COUNT=0
-                  MAX_RETRIES=3
-                  until ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform $cmd'" >> "$LOG_FILE" 2>&1; do
-                    RETRY_COUNT=$((RETRY_COUNT + 1))
-                    if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-                      echo "Error: Terraform $cmd failed for $main_option after $MAX_RETRIES retries, continuing" | tee -a "$LOG_FILE"
-                      break
+                  echo "Workflow type: $WF_TYPE" | tee -a "$LOG_FILE"
+              
+                  # Validate INSTANCE_IP
+                  if [ -z "$INSTANCE_IP" ]; then
+                    echo "Error: INSTANCE_IP is empty" | tee -a "$LOG_FILE"
+                    exit 1
+                  fi
+              
+                  # Get short region key
+                  SHORT_REGION=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OCI_REGIONS_FILE | grep \":$REGION\" | cut -d: -f1'") 2>>"$LOG_FILE"
+                  if [ -z "$SHORT_REGION" ]; then
+                    echo "Error: Failed to find short region key for $REGION in $OCI_REGIONS_FILE" | tee -a "$LOG_FILE"
+                    exit 1
+                  fi
+                  echo "Mapped region $REGION to short key $SHORT_REGION" | tee -a "$LOG_FILE"
+              
+                  # Validate service_options.json
+                  if [ ! -f /tmp/service_options.json ]; then
+                    echo "Error: /tmp/service_options.json does not exist" | tee -a "$LOG_FILE"
+                    exit 1
+                  fi
+                  echo "Contents of /tmp/service_options.json:" | tee -a "$LOG_FILE"
+                  cat /tmp/service_options.json >> "$LOG_FILE" 2>&1
+              
+                  # Check if outdir_structure_file.properties exists
+                  USE_OUTDIR_STRUCTURE=false
+                  if ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME test -f $OUTDIR_STRUCTURE_FILE" 2>>"$LOG_FILE"; then
+                    USE_OUTDIR_STRUCTURE=true
+                    echo "Outdir structure enabled: true" | tee -a "$LOG_FILE"
+                    echo "Contents of $OUTDIR_STRUCTURE_FILE:" | tee -a "$LOG_FILE"
+                    ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME cat $OUTDIR_STRUCTURE_FILE" >>"$LOG_FILE" 2>&1
+                  else
+                    echo "Outdir structure enabled: false" | tee -a "$LOG_FILE"
+                  fi
+              
+                  # Create directory for Terraform plans
+                  mkdir -p /tmp/terraform_plans || { echo "Error: Failed to create /tmp/terraform_plans" | tee -a "$LOG_FILE"; exit 1; }
+              
+                  # Define mapping from main_option to OCI Service Name
+                  declare -A MAIN_OPTION_TO_SERVICE
+                  # === Create Workflow Options ===
+                  MAIN_OPTION_TO_SERVICE["Identity"]="identity"
+                  MAIN_OPTION_TO_SERVICE["Governance"]="tagging"
+                  MAIN_OPTION_TO_SERVICE["Cost Management"]="budget"
+                  MAIN_OPTION_TO_SERVICE["Network"]="network"
+                  MAIN_OPTION_TO_SERVICE["OCI Firewall"]="firewall"
+                  MAIN_OPTION_TO_SERVICE["DNS Management"]="dns"
+                  MAIN_OPTION_TO_SERVICE["Compute"]="instance"
+                  MAIN_OPTION_TO_SERVICE["Storage"]="block-volume"
+                  MAIN_OPTION_TO_SERVICE["Database"]="dbsystem-vm-bm"
+                  MAIN_OPTION_TO_SERVICE["Load Balancers"]="loadbalancer"
+                  MAIN_OPTION_TO_SERVICE["Management Services"]="managementservices"
+                  MAIN_OPTION_TO_SERVICE["Developer Services"]="oke"
+                  MAIN_OPTION_TO_SERVICE["Security"]="kms"
+                  MAIN_OPTION_TO_SERVICE["Logging Services"]="logging"
+                  MAIN_OPTION_TO_SERVICE["Software-Defined Data Centers - OCVS"]="sddc"
+                  # === Export Workflow Options ===
+                  MAIN_OPTION_TO_SERVICE["Export Compute"]="instance"
+                  MAIN_OPTION_TO_SERVICE["Export Identity"]="identity"
+                  MAIN_OPTION_TO_SERVICE["Export Governance"]="tagging"
+                  MAIN_OPTION_TO_SERVICE["Export Cost Management"]="budget"
+                  MAIN_OPTION_TO_SERVICE["Export Network"]="network"
+                  MAIN_OPTION_TO_SERVICE["Export OCI Firewall"]="firewall"
+                  MAIN_OPTION_TO_SERVICE["Export DNS Management"]="dns"
+                  MAIN_OPTION_TO_SERVICE["Export Storage"]="block-volume"
+                  MAIN_OPTION_TO_SERVICE["Export Databases"]="dbsystem-vm-bm"
+                  MAIN_OPTION_TO_SERVICE["Export Load Balancers"]="loadbalancer"
+                  MAIN_OPTION_TO_SERVICE["Export Management Services"]="managementservices"
+                  MAIN_OPTION_TO_SERVICE["Export Developer Services"]="oke"
+                  MAIN_OPTION_TO_SERVICE["Export Security"]="kms"
+                  MAIN_OPTION_TO_SERVICE["Export Software-Defined Data Centers - OCVS"]="sddc"
+              
+                  # Define sub-option to service name mapping using full sub-option names
+                  declare -A SUB_OPTION_TO_SERVICE
+                  SUB_OPTION_TO_SERVICE["Export Governance:Export Tags"]="tagging"
+                  SUB_OPTION_TO_SERVICE["Export Governance:Export Quotas"]="quota"
+                  SUB_OPTION_TO_SERVICE["Export Cost Management:Export Budgets"]="budget"
+                  SUB_OPTION_TO_SERVICE["Export Network:Export Network components for NSGs Tab"]="nsg"
+                  SUB_OPTION_TO_SERVICE["Export Storage:Export Block Volumes/Block Backup Policy"]="block-volume"
+                  SUB_OPTION_TO_SERVICE["Export Storage:Export File Systems"]="fss"
+                  SUB_OPTION_TO_SERVICE["Export Storage:Export Object Storage Buckets"]="object-storage"
+                  SUB_OPTION_TO_SERVICE["Export Databases:Export Virtual Machine or Bare Metal DB Systems"]="dbsystem-vm-bm"
+                  SUB_OPTION_TO_SERVICE["Export Databases:Export EXA Infra and EXA VMClusters"]="database-exacs"
+                  SUB_OPTION_TO_SERVICE["Export Databases:Export ADBs"]="adb"
+                  SUB_OPTION_TO_SERVICE["Export Databases:Export MySQL DBs"]="mysql-dbsystem"
+                  SUB_OPTION_TO_SERVICE["Export Load Balancers:Export Network Load Balancers"]="networkloadbalancer"
+                  SUB_OPTION_TO_SERVICE["Export Compute:Export Dedicated VM Hosts"]="dedicated-vm-host"
+                  SUB_OPTION_TO_SERVICE["Export Compute:Export Instances (excludes instances launched by OKE)"]="instance"
+              
+                  # Check if Export All OCI Resources is in config.yaml or service_options.json
+                  EXPORT_ALL_CONFIG=$(yq e '.export_resources.operations[] | select(.main_option == "Export All OCI Resources")' config.yaml 2>>"$LOG_FILE" || echo "")
+                  if [ -n "$EXPORT_ALL_CONFIG" ] || ( [ -f /tmp/service_options.json ] && jq -e '."Export All OCI Resources"' /tmp/service_options.json >/dev/null 2>>"$LOG_FILE" ); then
+                    echo "Export All OCI Resources detected, processing all services" | tee -a "$LOG_FILE"
+                    SERVICES=("${!MAIN_OPTION_TO_SERVICE[@]}")
+                  else
+                    # Validate service_options.json
+                    if [ ! -f /tmp/service_options.json ] || ! jq -e . /tmp/service_options.json >/dev/null 2>>"$LOG_FILE"; then
+                      echo "Error: /tmp/service_options.json does not exist or is invalid JSON" | tee -a "$LOG_FILE"
+                      exit 1
                     fi
-                    echo "Retrying terraform $cmd for $main_option (attempt $((RETRY_COUNT + 1)))" | tee -a "$LOG_FILE"
-                    sleep 120
+                    SERVICES=$(jq -r 'keys[] | select(startswith("Export "))' /tmp/service_options.json 2>>"$LOG_FILE" || { echo "Error: Failed to parse service_options.json with jq" | tee -a "$LOG_FILE"; exit 1; })
+                    if [ -z "$SERVICES" ]; then
+                      echo "Warning: No export services found in service_options.json, skipping" | tee -a "$LOG_FILE"
+                      exit 0
+                    fi
+                  fi
+              
+                  # Process each main_option
+                  for main_option in "${SERVICES[@]}"; do
+                    echo "Processing main_option: $main_option" | tee -a "$LOG_FILE"
+                    # Check if main_option has sub-options in service_options.json
+                    SUB_OPTIONS=$(jq -r --arg key "$main_option" '.[$key] | if type == "array" then .[] else (.[keys[]] // []) | .[] end' /tmp/service_options.json 2>>"$LOG_FILE" | tr '\n' ',' | sed 's/,$//')
+                    if [ $? -ne 0 ]; then
+                      echo "Error: Failed to extract sub-options for $main_option" | tee -a "$LOG_FILE"
+                      exit 1
+                    fi
+                    if [ -z "$SUB_OPTIONS" ]; then
+                      # No sub-options, use main_option mapping
+                      SERVICE_NAME="${MAIN_OPTION_TO_SERVICE[$main_option]}"
+                      if [ -z "$SERVICE_NAME" ]; then
+                        echo "Warning: No service mapping found for $main_option in MAIN_OPTION_TO_SERVICE, skipping" | tee -a "$LOG_FILE"
+                        continue
+                      fi
+                      echo "Mapped main_option $main_option to OCI Service Name $SERVICE_NAME (no sub-options)" | tee -a "$LOG_FILE"
+                      # Get service directory
+                      if [ "$USE_OUTDIR_STRUCTURE" = true ]; then
+                        SERVICE_DIR=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OUTDIR_STRUCTURE_FILE | grep -i \"^$SERVICE_NAME=\" | cut -d= -f2'") 2>>"$LOG_FILE"
+                        if [ -z "$SERVICE_DIR" ]; then
+                          echo "Warning: No directory mapping found for $SERVICE_NAME in $OUTDIR_STRUCTURE_FILE, skipping $main_option" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        echo "Mapped $SERVICE_NAME to directory $SERVICE_DIR" | tee -a "$LOG_FILE"
+                        TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION/$SERVICE_DIR"
+                      else
+                        TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION"
+                      fi
+                      # Process Terraform directory
+                      if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
+                        echo "Warning: Directory $TF_DIR does not exist, skipping $main_option" | tee -a "$LOG_FILE"
+                        continue
+                      fi
+                      # Find latest .tfvars file
+                      LATEST_TFVARS=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'ls -t $TF_DIR/*.tfvars 2>/dev/null | head -n 1'") 2>>"$LOG_FILE"
+                      if [ -z "$LATEST_TFVARS" ]; then
+                        echo "Warning: No .tfvars files found in $TF_DIR, skipping $main_option" | tee -a "$LOG_FILE"
+                        continue
+                      fi
+                      echo "Latest .tfvars file: $LATEST_TFVARS" | tee -a "$LOG_FILE"
+                      # Check if .tfvars file is recent (within 1 hour)
+                      if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'find $LATEST_TFVARS -mmin -60'" 2>>"$LOG_FILE"; then
+                        echo "Warning: $LATEST_TFVARS is older than 1 hour, skipping $main_option" | tee -a "$LOG_FILE"
+                        continue
+                      fi
+                      # Set Terraform commands
+                      if [ "$WF_TYPE" = "export_resources" ]; then
+                        COMMANDS=("init" "plan -var-file=$LATEST_TFVARS -out=tfplan")
+                      else
+                        COMMANDS=("init" "plan -var-file=$LATEST_TFVARS -out=tfplan" "apply tfplan")
+                      fi
+                      # Execute Terraform commands with retries
+                      for cmd in "${COMMANDS[@]}"; do
+                        RETRY_COUNT=0
+                        MAX_RETRIES=3
+                        until ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform $cmd'" >> "$LOG_FILE" 2>&1; do
+                          RETRY_COUNT=$((RETRY_COUNT + 1))
+                          if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                            echo "Error: Terraform $cmd failed for $main_option after $MAX_RETRIES retries, continuing" | tee -a "$LOG_FILE"
+                            break
+                          fi
+                          echo "Retrying terraform $cmd for $main_option (attempt $((RETRY_COUNT + 1)))" | tee -a "$LOG_FILE"
+                          sleep 120
+                        done
+                        if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                          break
+                        fi
+                        if [ "$cmd" = "plan -var-file=$LATEST_TFVARS -out=tfplan" ] && [ "$WF_TYPE" = "export_resources" ]; then
+                          PLAN_FILE="/tmp/terraform_plans/${main_option}_tfplan_$(TZ=Asia/Kolkata date +%F_%H-%M-%S).txt"
+                          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform show -no-color tfplan'" > "$PLAN_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to save terraform plan for $main_option" | tee -a "$LOG_FILE"; exit 1; }
+                          echo "Terraform plan saved to $PLAN_FILE for $main_option" | tee -a "$LOG_FILE"
+                        fi
+                      done
+                      if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                        continue
+                      fi
+                      if [ "$WF_TYPE" = "create_resources" ]; then
+                        echo "Terraform apply completed for $main_option" | tee -a "$LOG_FILE"
+                      else
+                        echo "Terraform plan completed for $main_option (export_resources mode)" | tee -a "$LOG_FILE"
+                      fi
+                    else
+                      # Process sub-options
+                      IFS=',' read -ra SUB_OPTION_ARRAY <<< "$SUB_OPTIONS"
+                      for sub_option in "${SUB_OPTION_ARRAY[@]}"; do
+                        echo "Processing sub_option: $sub_option for $main_option" | tee -a "$LOG_FILE"
+                        # Check sub-option mapping
+                        SUB_KEY="${main_option}:${sub_option}"
+                        SERVICE_NAME="${SUB_OPTION_TO_SERVICE[$SUB_KEY]:-${MAIN_OPTION_TO_SERVICE[$main_option]}}"
+                        if [ -z "$SERVICE_NAME" ]; then
+                          echo "Warning: No service mapping found for $SUB_KEY or $main_option, skipping" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        echo "Mapped $SUB_KEY to OCI Service Name $SERVICE_NAME" | tee -a "$LOG_FILE"
+                        # Get service directory
+                        if [ "$USE_OUTDIR_STRUCTURE" = true ]; then
+                          SERVICE_DIR=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'grep -v \"^#\" $OUTDIR_STRUCTURE_FILE | grep -i \"^$SERVICE_NAME=\" | cut -d= -f2'") 2>>"$LOG_FILE"
+                          if [ -z "$SERVICE_DIR" ]; then
+                            echo "Warning: No directory mapping found for $SERVICE_NAME in $OUTDIR_STRUCTURE_FILE, skipping $SUB_KEY" | tee -a "$LOG_FILE"
+                            continue
+                          fi
+                          echo "Mapped $SERVICE_NAME to directory $SERVICE_DIR" | tee -a "$LOG_FILE"
+                          TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION/$SERVICE_DIR"
+                        else
+                          TF_DIR="/cd3user/tenancies/$PREFIX/terraform_files/$SHORT_REGION"
+                        fi
+                        # Process Terraform directory
+                        if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME test -d $TF_DIR" 2>>"$LOG_FILE"; then
+                          echo "Warning: Directory $TF_DIR does not exist, skipping $SUB_KEY" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        # Find latest .tfvars file
+                        LATEST_TFVARS=$(ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'ls -t $TF_DIR/*.tfvars 2>/dev/null | head -n 1'") 2>>"$LOG_FILE"
+                        if [ -z "$LATEST_TFVARS" ]; then
+                          echo "Warning: No .tfvars files found in $TF_DIR, skipping $SUB_KEY" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        echo "Latest .tfvars file: $LATEST_TFVARS" | tee -a "$LOG_FILE"
+                        # Check if .tfvars file is recent (within 1 hour)
+                        if ! ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'find $LATEST_TFVARS -mmin -60'" 2>>"$LOG_FILE"; then
+                          echo "Warning: $LATEST_TFVARS is older than 1 hour, skipping $SUB_KEY" | tee -a "$LOG_FILE"
+                          continue
+                        fi
+                        # Set Terraform commands
+                        if [ "$WF_TYPE" = "export_resources" ]; then
+                          COMMANDS=("init" "plan -var-file=$LATEST_TFVARS -out=tfplan")
+                        else
+                          COMMANDS=("init" "plan -var-file=$LATEST_TFVARS -out=tfplan" "apply tfplan")
+                        fi
+                        # Execute Terraform commands with retries
+                        for cmd in "${COMMANDS[@]}"; do
+                          RETRY_COUNT=0
+                          MAX_RETRIES=3
+                          until ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform $cmd'" >> "$LOG_FILE" 2>&1; do
+                            RETRY_COUNT=$((RETRY_COUNT + 1))
+                            if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                              echo "Error: Terraform $cmd failed for $SUB_KEY after $MAX_RETRIES retries, continuing" | tee -a "$LOG_FILE"
+                              break
+                            fi
+                            echo "Retrying terraform $cmd for $SUB_KEY (attempt $((RETRY_COUNT + 1)))" | tee -a "$LOG_FILE"
+                            sleep 120
+                          done
+                          if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                            break
+                          fi
+                          if [ "$cmd" = "plan -var-file=$LATEST_TFVARS -out=tfplan" ] && [ "$WF_TYPE" = "export_resources" ]; then
+                            # Sanitize sub_option for filename (replace spaces with underscores)
+                            SANITIZED_SUB_OPTION=$(echo "$sub_option" | tr ' ' '_')
+                            PLAN_FILE="/tmp/terraform_plans/${main_option}_${SANITIZED_SUB_OPTION}_tfplan_$(TZ=Asia/Kolkata date +%F_%H-%M-%S).txt"
+                            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform show -no-color tfplan'" > "$PLAN_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to save terraform plan for $SUB_KEY" | tee -a "$LOG_FILE"; exit 1; }
+                            echo "Terraform plan saved to $PLAN_FILE for $SUB_KEY" | tee -a "$LOG_FILE"
+                          fi
+                        done
+                        if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                          continue
+                        fi
+                        if [ "$WF_TYPE" = "create_resources" ]; then
+                          echo "Terraform apply completed for $SUB_KEY" | tee -a "$LOG_FILE"
+                        else
+                          echo "Terraform plan completed for $SUB_KEY (export_resources mode)" | tee -a "$LOG_FILE"
+                        fi
+                      done
+                    fi
+                    echo "Processing completed for main_option: $main_option" | tee -a "$LOG_FILE"
                   done
-                  if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-                    break
-                  fi
-                  if [ "$cmd" = "plan -var-file=$LATEST_TFVARS -out=tfplan" ] && [ "$WF_TYPE" = "export_resources" ]; then
-                    PLAN_FILE="/tmp/terraform_plans/${main_option}_tfplan_$(date +%F_%H-%M-%S).txt"
-                    ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman exec $CONTAINER_NAME bash -c 'cd $TF_DIR && terraform show -no-color tfplan'" > "$PLAN_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to save terraform plan for $main_option" | tee -a "$LOG_FILE"; exit 1; }
-                    echo "Terraform plan saved to $PLAN_FILE for $main_option" | tee -a "$LOG_FILE"
-                  fi
-                done
-                if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-                  continue
-                fi
-                if [ "$WF_TYPE" = "create_resources" ]; then
-                  echo "Terraform apply completed for $main_option" | tee -a "$LOG_FILE"
-                else
-                  echo "Terraform plan completed for $main_option (export_resources mode)" | tee -a "$LOG_FILE"
-                fi
-              done
-
-              echo "Terraform configurations processed successfully" | tee -a "$LOG_FILE"
-
+              
+                  echo "Terraform configurations processed successfully" | tee -a "$LOG_FILE"
 
         - name: Cleanup SSH Key
           if: success()
