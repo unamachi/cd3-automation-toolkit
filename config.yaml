@@ -1,6 +1,7 @@
 cd3_workflows:
  create_resources:
     enabled: false
+    validate_cd3: false
  export_resources:
     enabled: true
     validate_cd3: false
