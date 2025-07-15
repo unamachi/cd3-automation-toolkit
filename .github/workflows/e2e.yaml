@@ -2586,8 +2586,7 @@ jobs:
                     if [ -n "$TAGS" ]; then
                       ADD_FILTER="${ADD_FILTER}@,tag_filter=,[\"$TAGS\"],"
                     fi
-                    # Remove trailing comma
-                    ADD_FILTER=$(echo "$ADD_FILTER" | sed 's/,$//')
+
                     # Construct command
                     CMD="cd /cd3user/oci_tools/cd3_automation_toolkit/ && python3 -u setUpOCI.py $PROPERTIES_PATH --devops=true --main_options=\"$main_option\" --sub_options=\"$SUB_OPTIONS\""
                     if [ -n "$ADD_FILTER" ]; then
