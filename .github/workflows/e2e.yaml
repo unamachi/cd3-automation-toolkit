@@ -1311,28 +1311,60 @@ jobs:
               done
               echo "setUpOCI export workflow completed successfully" | tee -a "$LOG_FILE"
 
-      - name: Retrieve Exported Files
+
+      - name: Retrieve Exported Excel File
         if: steps.validate_workflow.outputs.export_resources_enabled == 'true'
         run: |
-          LOG_FILE="/tmp/cd3_retrieve_files_$(date +%F_%H-%M-%S).log"
-          touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
-          echo "Starting Retrieve Exported Files step at $(date)" | tee -a "$LOG_FILE"
-          PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
-          CONTAINER_NAME="cd3_toolkit"
-          WF_TYPE=$(grep "workflow_type" /tmp/${PREFIX}_setUpOCI.properties | cut -d= -f2)
-          if [ "$WF_TYPE" != "export_resources" ]; then
-            echo "Skipping file retrieval for workflow_type=$WF_TYPE" | tee -a "$LOG_FILE"
-            exit 0
-          fi
-          EXPORTED_DIR="/cd3user/tenancies/$PREFIX/cd3_files"
-          LOCAL_DIR="/tmp/exported_files"
-          mkdir -p "$LOCAL_DIR" 2>>"$LOG_FILE" || { echo "Error: Failed to create local directory $LOCAL_DIR" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp $CONTAINER_NAME:$EXPORTED_DIR /tmp/exported_files" 2>>"$LOG_FILE" || { echo "Error: Failed to copy exported files from container" | tee -a "$LOG_FILE"; exit 1; }
-          scp -r -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }}:/tmp/exported_files/* "$LOCAL_DIR" 2>>"$LOG_FILE" || { echo "Error: Failed to SCP exported files to runner" | tee -a "$LOG_FILE"; exit 1; }
-          ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -rf /tmp/exported_files" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary exported files" | tee -a "$LOG_FILE"; exit 1; }
-          echo "Exported files retrieved to $LOCAL_DIR:" | tee -a "$LOG_FILE"
-          ls -l "$LOCAL_DIR" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list exported files" | tee -a "$LOG_FILE"; exit 1; }
-          echo "Retrieve Exported Files completed successfully" | tee -a "$LOG_FILE"
+                  LOG_FILE="/tmp/cd3_retrieve_files_$(date +%F_%H-%M-%S).log"
+                  touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
+                  echo "Starting Retrieve Exported Excel File step at $(date)" | tee -a "$LOG_FILE"
+                  PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+                  CONTAINER_NAME="cd3_toolkit"
+                  # Check INSTANCE_IP
+                  if [ -z "${{ env.INSTANCE_IP }}" ]; then
+                    echo "Error: INSTANCE_IP is not set" | tee -a "$LOG_FILE"
+                    exit 1
+                  fi
+                  # Read WF_TYPE from runner
+                  WF_TYPE=$(grep "workflow_type" /tmp/${PREFIX}_setUpOCI.properties | cut -d= -f2) || { echo "Error: Failed to read workflow_type" | tee -a "$LOG_FILE"; exit 1; }
+                  if [ -z "$WF_TYPE" ]; then
+                    echo "Error: workflow_type not found in properties file" | tee -a "$LOG_FILE"
+                    exit 1
+                  fi
+                  if [ "$WF_TYPE" != "export_resources" ]; then
+                    echo "Skipping file retrieval for workflow_type=$WF_TYPE" | tee -a "$LOG_FILE"
+                    exit 0
+                  fi
+                  EXPORTED_DIR="/cd3user/tenancies/$PREFIX/cd3_files"
+                  LOCAL_DIR="/tmp/exported_files"
+                  EXCEL_FILE="CD3-Blank-template.xlsx"
+                  mkdir -p "$LOCAL_DIR" 2>>"$LOG_FILE" || { echo "Error: Failed to create local directory $LOCAL_DIR" | tee -a "$LOG_FILE"; exit 1; }
+                  # Verify Excel file exists
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME test -f $EXPORTED_DIR/$EXCEL_FILE" || { echo "Error: $EXCEL_FILE not found in $EXPORTED_DIR" | tee -a "$LOG_FILE"; exit 1; }
+                  # Copy Excel file from container to CD3 instance
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp $CONTAINER_NAME:$EXPORTED_DIR/$EXCEL_FILE /tmp/$EXCEL_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to copy $EXCEL_FILE from container" | tee -a "$LOG_FILE"; exit 1; }
+                  # Copy Excel file to runner
+                  scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }}:/tmp/$EXCEL_FILE "$LOCAL_DIR/$EXCEL_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to SCP $EXCEL_FILE to runner" | tee -a "$LOG_FILE"; exit 1; }
+                  # Upload Excel file as artifact
+                  echo "Uploading $EXCEL_FILE as artifact" | tee -a "$LOG_FILE"
+                  echo "::group::Upload Artifact"
+                  echo "path=$LOCAL_DIR/$EXCEL_FILE" >> $GITHUB_ENV
+                  echo "name=cd3_export_excel_${PREFIX}" >> $GITHUB_ENV
+                  echo "retention-days=1" >> $GITHUB_ENV
+                  echo "::endgroup::"
+                  # Clean up temporary Excel file on CD3 instance
+                  ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/$EXCEL_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary $EXCEL_FILE" | tee -a "$LOG_FILE"; exit 1; }
+                  echo "Excel file retrieved to $LOCAL_DIR/$EXCEL_FILE:" | tee -a "$LOG_FILE"
+                  ls -l "$LOCAL_DIR/$EXCEL_FILE" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list $EXCEL_FILE" | tee -a "$LOG_FILE"; exit 1; }
+                  echo "Retrieve Exported Excel File completed successfully" | tee -a "$LOG_FILE"
+
+      - name: Upload Excel Artifact from export workflow
+        if: steps.validate_workflow.outputs.export_resources_enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+            name: ${{ env.name }}
+            path: ${{ env.path }}
+            retention-days: ${{ env.retention-days }}
 
       - name: Run Shell Scripts in Changed Terraform Service Directories
         if: steps.validate_workflow.outputs.export_resources_enabled == 'true'
@@ -2610,29 +2642,59 @@ jobs:
                   done
                   echo "setUpOCI export workflow completed successfully" | tee -a "$LOG_FILE"
 
-        - name: Retrieve Exported Files
+        - name: Retrieve Exported Excel File
           if: steps.validate_workflow.outputs.export_resources_enabled == 'true'
           run: |
-            LOG_FILE="/tmp/cd3_retrieve_files_$(date +%F_%H-%M-%S).log"
-            touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
-            echo "Starting Retrieve Exported Files step at $(date)" | tee -a "$LOG_FILE"
-            PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
-            CONTAINER_NAME="cd3_toolkit"
-            WF_TYPE=$(grep "workflow_type" /tmp/${PREFIX}_setUpOCI.properties | cut -d= -f2)
-            if [ "$WF_TYPE" != "export_resources" ]; then
-              echo "Skipping file retrieval for workflow_type=$WF_TYPE" | tee -a "$LOG_FILE"
-              exit 0
-            fi
-            EXPORTED_DIR="/cd3user/tenancies/$PREFIX/cd3_files"
-            LOCAL_DIR="/tmp/exported_files"
-            mkdir -p "$LOCAL_DIR" 2>>"$LOG_FILE" || { echo "Error: Failed to create local directory $LOCAL_DIR" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "sudo podman cp $CONTAINER_NAME:$EXPORTED_DIR /tmp/exported_files" 2>>"$LOG_FILE" || { echo "Error: Failed to copy exported files from container" | tee -a "$LOG_FILE"; exit 1; }
-            scp -r -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP":/tmp/exported_files/* "$LOCAL_DIR" 2>>"$LOG_FILE" || { echo "Error: Failed to SCP exported files to runner" | tee -a "$LOG_FILE"; exit 1; }
-            ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@"$INSTANCE_IP" "if [ -d /tmp/exported_files ]; then sudo rm -rf /tmp/exported_files; else echo 'Warning: /tmp/exported_files does not exist, skipping removal' >> /tmp/remove.log; fi" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary exported files" | tee -a "$LOG_FILE"; cat /tmp/remove.log >> "$LOG_FILE" 2>/dev/null; exit 1; }
-            echo "Exported files retrieved to $LOCAL_DIR:" | tee -a "$LOG_FILE"
-            ls -l "$LOCAL_DIR" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list exported files" | tee -a "$LOG_FILE"; exit 1; }
-            echo "Retrieve Exported Files completed successfully" | tee -a "$LOG_FILE"
-
+                    LOG_FILE="/tmp/cd3_retrieve_files_$(date +%F_%H-%M-%S).log"
+                    touch "$LOG_FILE" || { echo "Error: Failed to create log file" >&2; exit 1; }
+                    echo "Starting Retrieve Exported Excel File step at $(date)" | tee -a "$LOG_FILE"
+                    PREFIX="${{ github.event.inputs.prefix || format('{0}-{1}', github.ref_name, github.run_id) }}"
+                    CONTAINER_NAME="cd3_toolkit"
+                    # Check INSTANCE_IP
+                    if [ -z "${{ env.INSTANCE_IP }}" ]; then
+                      echo "Error: INSTANCE_IP is not set" | tee -a "$LOG_FILE"
+                      exit 1
+                    fi
+                    # Read WF_TYPE from runner
+                    WF_TYPE=$(grep "workflow_type" /tmp/${PREFIX}_setUpOCI.properties | cut -d= -f2) || { echo "Error: Failed to read workflow_type" | tee -a "$LOG_FILE"; exit 1; }
+                    if [ -z "$WF_TYPE" ]; then
+                      echo "Error: workflow_type not found in properties file" | tee -a "$LOG_FILE"
+                      exit 1
+                    fi
+                    if [ "$WF_TYPE" != "export_resources" ]; then
+                      echo "Skipping file retrieval for workflow_type=$WF_TYPE" | tee -a "$LOG_FILE"
+                      exit 0
+                    fi
+                    EXPORTED_DIR="/cd3user/tenancies/$PREFIX/cd3_files"
+                    LOCAL_DIR="/tmp/exported_files"
+                    EXCEL_FILE="CD3-Blank-template.xlsx"
+                    mkdir -p "$LOCAL_DIR" 2>>"$LOG_FILE" || { echo "Error: Failed to create local directory $LOCAL_DIR" | tee -a "$LOG_FILE"; exit 1; }
+                    # Verify Excel file exists
+                    ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman exec $CONTAINER_NAME test -f $EXPORTED_DIR/$EXCEL_FILE" || { echo "Error: $EXCEL_FILE not found in $EXPORTED_DIR" | tee -a "$LOG_FILE"; exit 1; }
+                    # Copy Excel file from container to CD3 instance
+                    ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "sudo podman cp $CONTAINER_NAME:$EXPORTED_DIR/$EXCEL_FILE /tmp/$EXCEL_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to copy $EXCEL_FILE from container" | tee -a "$LOG_FILE"; exit 1; }
+                    # Copy Excel file to runner
+                    scp -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }}:/tmp/$EXCEL_FILE "$LOCAL_DIR/$EXCEL_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to SCP $EXCEL_FILE to runner" | tee -a "$LOG_FILE"; exit 1; }
+                    # Upload Excel file as artifact
+                    echo "Uploading $EXCEL_FILE as artifact" | tee -a "$LOG_FILE"
+                    echo "::group::Upload Artifact"
+                    echo "path=$LOCAL_DIR/$EXCEL_FILE" >> $GITHUB_ENV
+                    echo "name=cd3_export_excel_${PREFIX}" >> $GITHUB_ENV
+                    echo "retention-days=1" >> $GITHUB_ENV
+                    echo "::endgroup::"
+                    # Clean up temporary Excel file on CD3 instance
+                    ssh -i ~/.ssh/temp-id_rsa -o StrictHostKeyChecking=no opc@${{ env.INSTANCE_IP }} "rm -f /tmp/$EXCEL_FILE" 2>>"$LOG_FILE" || { echo "Error: Failed to remove temporary $EXCEL_FILE" | tee -a "$LOG_FILE"; exit 1; }
+                    echo "Excel file retrieved to $LOCAL_DIR/$EXCEL_FILE:" | tee -a "$LOG_FILE"
+                    ls -l "$LOCAL_DIR/$EXCEL_FILE" >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to list $EXCEL_FILE" | tee -a "$LOG_FILE"; exit 1; }
+                    echo "Retrieve Exported Excel File completed successfully" | tee -a "$LOG_FILE"
+                    
+        - name: Upload Excel Artifact from export workflow
+          if: steps.validate_workflow.outputs.export_resources_enabled == 'true'
+          uses: actions/upload-artifact@v4
+          with:
+              name: ${{ env.name }}
+              path: ${{ env.path }}
+              retention-days: ${{ env.retention-days }}
 
         - name: Run Shell Scripts in Changed Terraform Service Directories
           if: steps.validate_workflow.outputs.export_resources_enabled == 'true'
