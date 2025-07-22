@@ -7,7 +7,7 @@ cd3_workflows:
     validate_cd3: false
     filters:
       regions: ["phoenix"]
-      compartment_ids: ["Ulag"]
+      compartment_ids: ["PraveenM"]
       tags: []
     operations:
       - main_option: Export Compute
