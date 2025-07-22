@@ -10,5 +10,6 @@ cd3_workflows:
       compartment_ids: ["Ulag"]
       tags: []
     operations:
-      - main_option: Export All OCI Resources
-        sub_options: []
+      - main_option: Export Compute
+        sub_options:
+          - Export Instances (excludes instances launched by OKE)
